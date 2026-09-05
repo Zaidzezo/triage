@@ -1,0 +1,99 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id             String       @id @default(uuid())
+  githubId       String       @unique @map("github_id")
+  githubUsername String       @map("github_username")
+  avatarUrl      String?      @map("avatar_url")
+  accessToken    String       @map("access_token")
+  createdAt      DateTime?    @map("created_at")
+  
+  savedIssues    SavedIssue[]
+
+  @@map("users")
+}
+
+model Repo {
+  id           String      @id @default(uuid())
+  githubRepoId String      @unique @map("github_repo_id")
+  fullName     String      @map("full_name")
+  description  String?
+  stars        Int
+  language     String?
+  ownerLogin   String      @map("owner_login")
+  createdAt    DateTime?   @map("created_at")
+  lastSyncedAt DateTime?   @map("last_synced_at")
+  
+  issues       Issue[]
+  repoHealth   RepoHealth?
+
+  @@map("repos")
+}
+
+model Issue {
+  id                String       @id @default(uuid())
+  githubIssueId     String       @unique @map("github_issue_id")
+  repoId            String       @map("repo_id")
+  repo              Repo         @relation(fields: [repoId], references: [id])
+  title             String
+  bodyPreview       String?      @map("body_preview")
+  state             String
+  authorAssociation String       @map("author_association")
+  commentsCount     Int?         @map("comments_count")
+  isAssigned        Boolean?     @map("is_assigned")
+  hasLinkedPr       Boolean?     @map("has_linked_pr")
+  createdAt         DateTime?    @map("created_at")
+  lastSyncedAt      DateTime?    @map("last_synced_at")
+  
+  savedIssues       SavedIssue[]
+  aiScore           AiScore?
+
+  @@map("issues")
+}
+
+model RepoHealth {
+  id                     String    @id @default(uuid())
+  repoId                 String    @unique @map("repo_id")
+  repo                   Repo      @relation(fields: [repoId], references: [id])
+  prMergeRate            Float?    @map("pr_merge_rate")
+  avgFirstResponseHours  Float?    @map("avg_first_response_hours")
+  avgCommentsBeforeMerge Float?    @map("avg_comments_before_merge")
+  lastSyncedAt           DateTime? @map("last_synced_at")
+
+  @@map("repo_health")
+}
+
+model SavedIssue {
+  id      String    @id @default(uuid())
+  userId  String    @map("user_id")
+  user    User      @relation(fields: [userId], references: [id])
+  issueId String    @map("issue_id")
+  issue   Issue     @relation(fields: [issueId], references: [id])
+  savedAt DateTime? @map("saved_at")
+
+  @@map("saved_issues")
+}
+
+model AiScore {
+  id          String    @id @default(uuid())
+  issueId     String    @unique @map("issue_id")
+  issue       Issue     @relation(fields: [issueId], references: [id])
+  difficulty  String
+  explanation String
+  provider    String
+  model       String
+  scoredAt    DateTime? @map("scored_at")
+
+  @@map("ai_scores")
+}
