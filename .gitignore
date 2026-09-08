@@ -41,3 +41,9 @@ yarn-error.log*
 next-env.d.ts
 
 /app/generated/prisma
+
+# Local AI/editor tool folders (personal/local config)
+.claude/
+.windsurf/
+.agents/
+.postman/
