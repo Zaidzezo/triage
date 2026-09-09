@@ -84,6 +84,7 @@ model SavedIssue {
   issue   Issue     @relation(fields: [issueId], references: [id])
   savedAt DateTime? @map("saved_at")
 
+  @@unique([userId, issueId])
   @@map("saved_issues")
 }
 
