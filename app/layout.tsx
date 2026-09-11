@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google"
 import "./globals.css"
 import AuthSessionProvider from "./components/SessionProvider"
 import Navbar from "./components/Navbar"
+import { auth } from "@/auth" // Import auth
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -19,16 +20,20 @@ export const metadata: Metadata = {
   description: "GitHub Issues Finder",
 }
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode
 }) {
+  const session = await auth()
+
   return (
     <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+        {/* Pass session to provider to avoid extra network requests on the client */}
         <AuthSessionProvider>
-          <Navbar />
+          {/* Only render the global Navbar if the user is logged in */}
+          {session && <Navbar />}
           {children}
         </AuthSessionProvider>
       </body>
