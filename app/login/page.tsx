@@ -19,6 +19,7 @@ import {
 } from "next/font/google";
 
 import { signIn } from "next-auth/react";
+import Image from "next/image";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -281,54 +282,6 @@ function GlassCard({
 // LOGO
 // ─────────────────────────────────────────────────────────────────────────────
 
-function Logo() {
-  return (
-    <a
-      href="/"
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 10,
-        color: T.text,
-        textDecoration: "none",
-      }}
-    >
-      <motion.div
-        whileHover={{
-          rotate: 8,
-          scale: 1.05,
-        }}
-        style={{
-          width: 30,
-          height: 30,
-          display: "grid",
-          placeItems: "center",
-          borderRadius: 9,
-          background: T.violet,
-          boxShadow:
-            "0 0 28px rgba(155,140,255,0.34)",
-        }}
-      >
-        <Search
-          size={15}
-          color={T.bg}
-          strokeWidth={2.8}
-        />
-      </motion.div>
-
-      <span
-        style={{
-          fontFamily: "var(--font-grotesk)",
-          fontSize: 17,
-          fontWeight: 750,
-          letterSpacing: "-0.02em",
-        }}
-      >
-        Triage
-      </span>
-    </a>
-  );
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ISSUE CARD
@@ -564,7 +517,7 @@ function Core() {
           style={{
             width: "100%",
             height: "100%",
-            marginTop: 70,
+            marginTop: 80,
             background:
               "linear-gradient(145deg, rgba(29,34,51,0.97), rgba(10,13,20,0.92))",
             border: `1px solid ${T.borderBright}`,
@@ -941,13 +894,29 @@ function LoginPanel() {
             }}
           />
 
-          <Logo />
+<div
+  style={{
+    width: 290,
+    height: 150,
+    flexShrink: 0,
+    position: "relative",
+    overflow: "hidden",
+  }}
+>
+  <Image
+    src="/logo.png"
+    loading="eager"
+    alt="Triage"
+    fill
+    style={{
+      objectFit: "contain",
+      transform: "scale(1.8)",
+    }}
+  />
+</div>
 
           {/* Heading */}
           <div
-            style={{
-              marginTop: 30,
-            }}
           >
             <p
               style={{
@@ -1300,7 +1269,24 @@ export default function LoginPage() {
               "1px solid rgba(255,255,255,0.045)",
           }}
         >
-          <Logo />
+<div
+  style={{
+    width: 290,
+    height: 150,
+    flexShrink: 0,
+    position: "relative",
+  }}
+>
+  <Image
+    src="/logo.png"
+    loading="eager"
+    alt="Triage"
+    fill
+    style={{
+      objectFit: "contain",
+    }}
+  />
+</div>
 
           <motion.a
             href="/"
@@ -1438,6 +1424,22 @@ export default function LoginPage() {
             <LoginPanel />
           </div>
         </section>
+
+        {/* ───── BOTTOM CARD ───── */}
+<IssueCard
+  style={{
+    top: 850,
+    left: "31.5%",
+    transform: "translateX(-50%)",
+    zIndex: 5,
+  }}
+  rotate={-3}
+  delay={0.56}
+  repo="openai/openai-cookbook"
+  title="Improve examples for API error handling"
+  label="documentation"
+  labelColor={T.violet}
+/>
 
         {/* Footer */}
         <footer

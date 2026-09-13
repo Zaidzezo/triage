@@ -21,6 +21,7 @@ import {
   Terminal,
 } from "lucide-react";
 import { Inter, JetBrains_Mono, Space_Grotesk } from "next/font/google";
+import Image from "next/image";
 
 const inter    = Inter({ subsets: ["latin"], variable: "--font-inter" });
 const grotesk  = Space_Grotesk({ subsets: ["latin"], variable: "--font-grotesk" });
@@ -530,19 +531,24 @@ function Nav() {
       }} />
 
       {/* Logo */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <div style={{
-          width: 29, height: 29, borderRadius: 9,
-          display: "grid", placeItems: "center",
-          background: T.violet,
-          boxShadow: `0 0 26px rgba(155,140,255,0.35)`,
-        }}>
-          <Search size={14} color="#08090D" strokeWidth={2.7} />
-        </div>
-        <span style={{ fontFamily: "var(--font-grotesk)", fontSize: 16, fontWeight: 750 }}>
-          Triage
-        </span>
-      </div>
+<div
+  style={{
+    width: 20,
+    height: 150,
+    flexShrink: 0,
+    position: "relative",
+  }}
+>
+  <Image
+    src="/logo.png"
+    loading="eager"
+    alt="Triage"
+    fill
+    style={{
+      objectFit: "contain",
+    }}
+  />
+</div>
 
       {/* Links */}
       <div style={{ display: "flex", gap: 28 }}>
