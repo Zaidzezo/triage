@@ -1442,48 +1442,43 @@ export default function LoginPage() {
 />
 
         {/* Footer */}
-        <footer
-          className="login-footer"
+<footer
+      style={{
+        maxWidth: 1600,
+        margin: "0",
+        padding: "2px 40px",
+        borderTop: `1px solid ${T.border}`,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 20,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div
           style={{
-            width: "100%",
-            maxWidth: 1380,
-            margin: "0 auto",
-            padding: "0 40px 24px",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 20,
+            width: 200,
+            height: 100,
+            flexShrink: 0,
+            position: "relative",
           }}
         >
-          <span
+          <Image
+            src="/logo.png"
+            loading="eager"
+            alt="Triage"
+            fill
             style={{
-              color: T.faint,
-              fontFamily: "var(--font-mono)",
-              fontSize: 9.5,
+              objectFit: "contain",
             }}
-          >
-            triage / authentication
-          </span>
+          />
+        </div>
+      </div>
 
-          <span
-            style={{
-              color: T.faint,
-              fontSize: 10.5,
-            }}
-          >
-            © 2026 Triage
-          </span>
-
-          <span
-            style={{
-              color: T.faint,
-              fontFamily: "var(--font-mono)",
-              fontSize: 9.5,
-            }}
-          >
-            secure connection
-          </span>
-        </footer>
+      <span style={{ color: T.faint, fontSize: 11.5, marginBottom: 20 }}>
+        © 2026 Triage
+      </span>
+    </footer>
       </div>
 
       <style>{`
