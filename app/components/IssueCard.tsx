@@ -1,240 +1,936 @@
-"use client"
+"use client";
 
-import { useState } from "react"
+import { useState } from "react";
+import {
+  Bookmark,
+  Check,
+  Clock3,
+  ExternalLink,
+  GitBranch,
+  MessageSquare,
+  Sparkles,
+  Star,
+  UserRound,
+} from "lucide-react";
+import { motion, useReducedMotion } from "framer-motion";
 
-const P = "#E05530"
+const T = {
+  bg: "#08090D",
+  glass: "rgba(18, 22, 32, 0.58)",
+  glassStrong: "rgba(20, 25, 37, 0.78)",
+
+  border: "rgba(255,255,255,0.09)",
+  borderBright: "rgba(255,255,255,0.15)",
+
+  text: "#F5F7FB",
+  muted: "#9299A8",
+  faint: "#565D6C",
+
+  violet: "#9B8CFF",
+  violetDim: "rgba(155,140,255,0.12)",
+
+  lime: "#B8F36B",
+  amber: "#FFC978",
+  red: "#FF8E9E",
+};
 
 export interface AiScore {
-  difficulty: "easy" | "medium" | "hard"
-  explanation: string
+  difficulty: "easy" | "medium" | "hard";
+  explanation: string;
 }
 
-export interface Issue {
-  id: string
-  number: number
-  title: string
-  url: string
-  bodyPreview: string | null
-  state: string
-  authorAssociation: string
-  commentsCount: number
-  isAssigned: boolean
-  hasLinkedPr: boolean
-  createdAt: string
-  aiScore: AiScore | null
+export interface RepositoryHealth {
+  reviewedInLast10: boolean;
+  pullRequestsChecked: number;
+  reviewedPullRequests: number;
 }
 
 export interface RepoInfo {
-  fullName: string
-  stars: number
-  language: string | null
-  description: string | null
+  fullName: string;
+  stars: number;
+  language: string | null;
+  description: string | null;
+  health: RepositoryHealth;
+}
+
+export interface Issue {
+  id: string;
+  githubIssueId?: string;
+  number: number;
+  title: string;
+  url: string;
+  bodyPreview: string | null;
+  state: string;
+  authorAssociation: string;
+  commentsCount: number;
+  isAssigned: boolean;
+  hasLinkedPr: boolean;
+  createdAt: string;
+  aiScore: AiScore | null;
+  repo?: RepoInfo;
 }
 
 interface Props {
-  issue: Issue
-  repo: RepoInfo
-  isSaved: boolean
-  isScoring: boolean
-  onSave: () => void
-  onScore: () => void
+  issue: Issue;
+  repo: RepoInfo;
+  isSaved: boolean;
+  isScoring: boolean;
+  onSave: () => void;
+  onScore: () => void;
 }
 
 function formatStars(n: number) {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(n >= 10_000 ? 0 : 1)}k`
-  return String(n)
+  if (n >= 1_000_000) {
+    return `${(n / 1_000_000).toFixed(1)}M`;
+  }
+
+  if (n >= 1_000) {
+    return `${(n / 1_000).toFixed(
+      n >= 10_000 ? 0 : 1
+    )}k`;
+  }
+
+  return String(n);
 }
 
-function timeAgo(d: string) {
-  const s = Math.floor((Date.now() - new Date(d).getTime()) / 1000)
-  if (s < 60) return `${s}s ago`
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`
-  if (s < 2_592_000) return `${Math.floor(s / 86400)} days ago`
-  if (s < 31_536_000) return `${Math.floor(s / 2_592_000)} months ago`
-  return `${Math.floor(s / 31_536_000)}y ago`
+function timeAgo(date: string) {
+  const seconds = Math.floor(
+    (Date.now() - new Date(date).getTime()) /
+      1000
+  );
+
+  if (seconds < 60) {
+    return `${seconds}s ago`;
+  }
+
+  if (seconds < 3600) {
+    return `${Math.floor(seconds / 60)}m ago`;
+  }
+
+  if (seconds < 86400) {
+    return `${Math.floor(seconds / 3600)}h ago`;
+  }
+
+  if (seconds < 2_592_000) {
+    return `${Math.floor(seconds / 86400)}d ago`;
+  }
+
+  if (seconds < 31_536_000) {
+    return `${Math.floor(
+      seconds / 2_592_000
+    )}mo ago`;
+  }
+
+  return `${Math.floor(
+    seconds / 31_536_000
+  )}y ago`;
 }
 
 const AUTHOR_MAP: Record<string, string> = {
-  OWNER: "Owner", COLLABORATOR: "Collaborator",
-  CONTRIBUTOR: "Contributor", MEMBER: "Member", NONE: "None",
-}
+  OWNER: "Owner",
+  COLLABORATOR: "Collaborator",
+  CONTRIBUTOR: "Contributor",
+  MEMBER: "Member",
+  NONE: "Random",
+};
 
 const DIFF_MAP = {
-  easy: { color: "#16A34A", label: "Easy" },
-  medium: { color: "#D97706", label: "Medium" },
-  hard: { color: "#DC2626", label: "Hard" },
+  easy: {
+    color: T.lime,
+    label: "Easy",
+  },
+  medium: {
+    color: T.amber,
+    label: "Medium",
+  },
+  hard: {
+    color: T.red,
+    label: "Hard",
+  },
+};
+
+function MetaItem({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        color: T.muted,
+        fontSize: 10.5,
+      }}
+    >
+      {children}
+    </span>
+  );
 }
 
-export default function IssueCard({ issue, repo, isSaved, isScoring, onSave, onScore }: Props) {
-  const [expanded, setExpanded] = useState(false)
-  const hasScore = !!issue.aiScore
+function Tag({
+  children,
+  color = T.muted,
+  background = "rgba(255,255,255,0.03)",
+  border = T.border,
+}: {
+  children: React.ReactNode;
+  color?: string;
+  background?: string;
+  border?: string;
+}) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        padding: "4px 8px",
+        borderRadius: 999,
+        background,
+        border: `1px solid ${border}`,
+        color,
+        fontSize: 9.5,
+        fontWeight: 700,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+export default function IssueCard({
+  issue,
+  repo,
+  isSaved,
+  isScoring,
+  onSave,
+  onScore,
+}: Props) {
+  const [expanded, setExpanded] =
+    useState(false);
+
+  const reduce = useReducedMotion();
+
+  const hasScore = !!issue.aiScore;
+
+  const difficulty = issue.aiScore
+    ? DIFF_MAP[
+        issue.aiScore.difficulty
+      ]
+    : null;
+
+  const health = repo.health ?? {
+  reviewedInLast10: false,
+  pullRequestsChecked: 0,
+  reviewedPullRequests: 0,
+};
+
+const repoHealthy =
+  health.reviewedInLast10;
 
   function handleAiClick() {
-    if (!hasScore) onScore()
-    setExpanded(p => !p)
+    if (!hasScore) {
+      onScore();
+    }
+
+    setExpanded(
+      (previous) => !previous
+    );
   }
 
   return (
-    <div style={{ border: "1px solid #E5E7EB", borderRadius: 12, background: "#fff", marginBottom: 10, overflow: "hidden" }}>
-      <div style={{ padding: "14px 16px 13px" }}>
+    <motion.article
+      layout
+      whileHover={
+        reduce
+          ? undefined
+          : { y: -2 }
+      }
+      transition={{
+        duration: 0.23,
+      }}
+      style={{
+        position: "relative",
+        overflow: "hidden",
+        marginBottom: 12,
+        borderRadius: 16,
+        border:
+          `1px solid ${T.border}`,
+        background:
+          "linear-gradient(145deg, rgba(20,24,35,0.72), rgba(11,14,21,0.70))",
+        backdropFilter:
+          "blur(20px)",
+        WebkitBackdropFilter:
+          "blur(20px)",
+        boxShadow:
+          "0 25px 70px rgba(0,0,0,0.26), inset 0 1px 0 rgba(255,255,255,0.055)",
+      }}
+    >
+      <div
+        aria-hidden
+        style={{
+          position: "absolute",
+          inset: 0,
+          pointerEvents:
+            "none",
+          background:
+            "linear-gradient(135deg, rgba(255,255,255,0.035), transparent 32%, rgba(155,140,255,0.025))",
+        }}
+      />
 
-        {/* Top row: repo info + metadata + actions */}
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 10 }}>
+      <div
+        style={{
+          position: "relative",
+          zIndex: 1,
+          padding:
+            "18px 19px 16px",
+        }}
+      >
+        {/* TOP ROW */}
 
-          {/* Left: repo name + stars */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="#374151" style={{ flexShrink: 0 }}>
-              <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
-            </svg>
-            <div>
-              <span style={{ fontSize: 14, fontWeight: 600, color: "#111827" }}>{repo.fullName}</span>
-              <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 1 }}>
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="#F59E0B" stroke="#F59E0B" strokeWidth="1">
-                  <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-                </svg>
-                <span style={{ fontSize: 12, color: "#6B7280" }}>{formatStars(repo.stars)}</span>
+        <div
+          style={{
+            display: "flex",
+            alignItems:
+              "flex-start",
+            justifyContent:
+              "space-between",
+            gap: 14,
+            marginBottom: 13,
+          }}
+        >
+          {/* Repository */}
+
+          <div
+            style={{
+              minWidth: 0,
+              display: "flex",
+              alignItems:
+                "flex-start",
+              gap: 9,
+            }}
+          >
+            <div
+              style={{
+                width: 31,
+                height: 31,
+                flexShrink: 0,
+                display: "grid",
+                placeItems: "center",
+                borderRadius: 9,
+                background:
+                  T.violetDim,
+                border:
+                  "1px solid rgba(155,140,255,0.20)",
+                color: T.violet,
+              }}
+            >
+              <GitBranch size={14} />
+            </div>
+
+            <div
+              style={{
+                minWidth: 0,
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems:
+                    "center",
+                  gap: 7,
+                  flexWrap:
+                    "wrap",
+                }}
+              >
+                <span
+                  style={{
+                    color:
+                      "#C7C2FF",
+                    fontFamily:
+                      "var(--font-mono)",
+                    fontSize: 10,
+                    fontWeight: 650,
+                  }}
+                >
+                  {repo.fullName}
+                </span>
+
+                <span
+                  style={{
+                    color: T.faint,
+                    fontFamily:
+                      "var(--font-mono)",
+                    fontSize: 9,
+                  }}
+                >
+                  #{issue.number}
+                </span>
+
+                {!issue.isAssigned && (
+                  <Tag
+                    color={T.lime}
+                    background="rgba(184,243,107,0.07)"
+                    border="rgba(184,243,107,0.18)"
+                  >
+                    <Check size={9} />
+                    open contribution
+                  </Tag>
+                )}
+
+                {/* Repository health */}
+
+                <span
+  title={
+    health.pullRequestsChecked === 0
+      ? "Repository review history has not been checked yet."
+      : repoHealthy
+      ? `At least ${health.reviewedPullRequests} of the latest ${health.pullRequestsChecked} pull requests had a review.`
+      : `None of the latest ${health.pullRequestsChecked} pull requests had a review.`
+  }
+  style={{
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 5,
+    padding: "3px 7px",
+    borderRadius: 999,
+    background:
+      health.pullRequestsChecked === 0
+        ? "rgba(255,255,255,0.035)"
+        : repoHealthy
+        ? "rgba(184,243,107,0.07)"
+        : "rgba(255,142,158,0.06)",
+    border:
+      `1px solid ${
+        health.pullRequestsChecked === 0
+          ? "rgba(255,255,255,0.10)"
+          : repoHealthy
+          ? "rgba(184,243,107,0.18)"
+          : "rgba(255,142,158,0.15)"
+      }`,
+    color:
+      health.pullRequestsChecked === 0
+        ? T.faint
+        : repoHealthy
+        ? T.lime
+        : T.red,
+    fontSize: 8.5,
+    fontWeight: 750,
+    whiteSpace: "nowrap",
+  }}
+>
+  <span
+    style={{
+      width: 5,
+      height: 5,
+      borderRadius: "50%",
+      background:
+        health.pullRequestsChecked === 0
+          ? T.faint
+          : repoHealthy
+          ? T.lime
+          : T.red,
+      boxShadow:
+        health.pullRequestsChecked === 0
+          ? "none"
+          : repoHealthy
+          ? `0 0 8px ${T.lime}`
+          : `0 0 8px ${T.red}`,
+    }}
+  />
+
+  {health.pullRequestsChecked === 0
+    ? "not checked"
+    : repoHealthy
+    ? "reviewed"
+    : "unreviewed"}
+</span>
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  alignItems:
+                    "center",
+                  gap: 10,
+                  marginTop: 5,
+                }}
+              >
+                <MetaItem>
+                  <Star
+                    size={11}
+                    color={T.amber}
+                    fill={T.amber}
+                  />
+                  {formatStars(
+                    repo.stars
+                  )}
+                </MetaItem>
+
+                {repo.language && (
+                  <>
+                    <span
+                      style={{
+                        color:
+                          T.faint,
+                      }}
+                    >
+                      ·
+                    </span>
+
+                    <MetaItem>
+                      {repo.language}
+                    </MetaItem>
+                  </>
+                )}
               </div>
             </div>
-            {/* Repo health placeholder badge */}
-            <span style={{
-              fontSize: 11, fontWeight: 500, padding: "2px 8px", borderRadius: 99,
-              background: "#DCFCE7", color: "#16A34A", border: "1px solid #BBF7D0", flexShrink: 0,
-            }}>Active</span>
           </div>
 
-          {/* Right: metadata + actions */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
-            <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13, color: "#6B7280" }}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-              </svg>
-              {issue.commentsCount}
-            </span>
-            <span style={{ color: "#D1D5DB" }}>·</span>
-            <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13, color: "#6B7280" }}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
-              </svg>
-              {timeAgo(issue.createdAt)}
-            </span>
-            <span style={{ color: "#D1D5DB" }}>·</span>
-            <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13, color: "#6B7280" }}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2">
-                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
-              </svg>
-              {AUTHOR_MAP[issue.authorAssociation] ?? issue.authorAssociation}
-            </span>
-            {hasScore && (
-              <>
-                <span style={{ color: "#D1D5DB" }}>·</span>
-                <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13, color: "#6B7280" }}>
-                  <span style={{ width: 8, height: 8, borderRadius: "50%", background: DIFF_MAP[issue.aiScore!.difficulty].color, display: "inline-block" }} />
-                  {DIFF_MAP[issue.aiScore!.difficulty].label}
-                </span>
-              </>
-            )}
-            <span style={{ color: "#D1D5DB" }}>·</span>
-            {/* Save heart */}
-            <button onClick={onSave} style={{ border: "none", background: "none", cursor: "pointer", padding: 2, color: isSaved ? "#EF4444" : "#D1D5DB", lineHeight: 1 }} title={isSaved ? "Unsave" : "Save"}>
-              <svg width="17" height="17" viewBox="0 0 24 24" fill={isSaved ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2">
-                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
-              </svg>
+          {/* ACTIONS */}
+
+          <div
+            style={{
+              display: "flex",
+              alignItems:
+                "center",
+              gap: 6,
+              flexShrink: 0,
+            }}
+          >
+            <button
+              onClick={onSave}
+              aria-label={
+                isSaved
+                  ? "Remove saved issue"
+                  : "Save issue"
+              }
+              title={
+                isSaved
+                  ? "Unsave issue"
+                  : "Save issue"
+              }
+              style={{
+                width: 31,
+                height: 31,
+                display: "grid",
+                placeItems:
+                  "center",
+                border:
+                  `1px solid ${
+                    isSaved
+                      ? "rgba(155,140,255,0.28)"
+                      : T.border
+                  }`,
+                borderRadius: 8,
+                background:
+                  isSaved
+                    ? T.violetDim
+                    : "rgba(255,255,255,0.02)",
+                color:
+                  isSaved
+                    ? T.violet
+                    : T.faint,
+                cursor:
+                  "pointer",
+              }}
+            >
+              <Bookmark
+                size={14}
+                fill={
+                  isSaved
+                    ? "currentColor"
+                    : "none"
+                }
+              />
             </button>
-            {/* External link */}
-            <a href={issue.url} target="_blank" rel="noopener noreferrer" style={{ color: "#D1D5DB", lineHeight: 1 }} title="Open on GitHub">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
-              </svg>
+
+            <a
+              href={issue.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Open issue on GitHub"
+              title="Open on GitHub"
+              style={{
+                width: 31,
+                height: 31,
+                display: "grid",
+                placeItems:
+                  "center",
+                border:
+                  `1px solid ${T.border}`,
+                borderRadius: 8,
+                background:
+                  "rgba(255,255,255,0.02)",
+                color: T.faint,
+                textDecoration:
+                  "none",
+              }}
+            >
+              <ExternalLink size={14} />
             </a>
           </div>
         </div>
 
-        {/* Issue title */}
-        <h3 style={{ fontSize: 15, fontWeight: 600, color: "#111827", margin: "0 0 6px", lineHeight: 1.4 }}>
+        {/* TITLE */}
+
+        <h3
+          style={{
+            margin: "0 0 7px",
+            color: T.text,
+            fontFamily:
+              "var(--font-grotesk)",
+            fontSize: 17,
+            lineHeight: 1.32,
+            letterSpacing:
+              "-0.025em",
+            fontWeight: 700,
+          }}
+        >
           {issue.title}
         </h3>
 
-        {/* Body preview */}
+        {/* BODY */}
+
         {issue.bodyPreview && (
-          <p style={{
-            fontSize: 13, color: "#6B7280", margin: "0 0 12px", lineHeight: 1.55,
-            display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
-          } as React.CSSProperties}>
+          <p
+            style={{
+              margin:
+                "0 0 14px",
+              color: T.muted,
+              fontSize: 11.5,
+              lineHeight: 1.65,
+              display:
+                "-webkit-box",
+              WebkitLineClamp: 2,
+              WebkitBoxOrient:
+                "vertical",
+              overflow:
+                "hidden",
+            }}
+          >
             {issue.bodyPreview}
           </p>
         )}
 
-        {/* Tags + AI button row */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {/* META */}
+
+        <div
+          style={{
+            display: "flex",
+            alignItems:
+              "center",
+            gap: 10,
+            flexWrap:
+              "wrap",
+            paddingTop: 2,
+          }}
+        >
+          <MetaItem>
+            <MessageSquare
+              size={11}
+            />
+            {issue.commentsCount}
+          </MetaItem>
+
+          <span
+            style={{
+              color: T.faint,
+            }}
+          >
+            ·
+          </span>
+
+          <MetaItem>
+            <Clock3 size={11} />
+            {timeAgo(
+              issue.createdAt
+            )}
+          </MetaItem>
+
+          <span
+            style={{
+              color: T.faint,
+            }}
+          >
+            ·
+          </span>
+
+          <MetaItem>
+            <UserRound
+              size={11}
+            />
+            {AUTHOR_MAP[
+              issue.authorAssociation
+            ] ??
+              issue.authorAssociation}
+          </MetaItem>
+
+          {hasScore &&
+            difficulty && (
+              <>
+                <span
+                  style={{
+                    color:
+                      T.faint,
+                  }}
+                >
+                  ·
+                </span>
+
+                <MetaItem>
+                  <span
+                    style={{
+                      width: 6,
+                      height: 6,
+                      borderRadius:
+                        "50%",
+                      background:
+                        difficulty.color,
+                      boxShadow:
+                        `0 0 8px ${difficulty.color}`,
+                    }}
+                  />
+
+                  {
+                    difficulty.label
+                  }
+                </MetaItem>
+              </>
+            )}
+        </div>
+
+        {/* BOTTOM */}
+
+        <div
+          style={{
+            display: "flex",
+            alignItems:
+              "center",
+            justifyContent:
+              "space-between",
+            gap: 12,
+            flexWrap:
+              "wrap",
+            marginTop: 15,
+            paddingTop: 13,
+            borderTop:
+              `1px solid ${T.border}`,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              gap: 6,
+              flexWrap:
+                "wrap",
+            }}
+          >
             {!issue.isAssigned && (
-              <span style={{ fontSize: 12, padding: "3px 9px", borderRadius: 99, background: "#F0FDF4", border: "1px solid #BBF7D0", color: "#16A34A" }}>good first issue</span>
+              <Tag
+                color={T.lime}
+                background="rgba(184,243,107,0.06)"
+                border="rgba(184,243,107,0.16)"
+              >
+                good first issue
+              </Tag>
             )}
+
             {issue.isAssigned && (
-              <span style={{ fontSize: 12, padding: "3px 9px", borderRadius: 99, border: "1px solid #E5E7EB", color: "#6B7280" }}>assigned</span>
+              <Tag>
+                assigned
+              </Tag>
             )}
+
             {issue.hasLinkedPr && (
-              <span style={{ fontSize: 12, padding: "3px 9px", borderRadius: 99, background: "#EFF6FF", border: "1px solid #BFDBFE", color: "#2563EB" }}>linked PR</span>
+              <Tag
+                color="#8FC7FF"
+                background="rgba(143,199,255,0.06)"
+                border="rgba(143,199,255,0.16)"
+              >
+                linked PR
+              </Tag>
             )}
           </div>
 
-          <button
+          <motion.button
             onClick={handleAiClick}
             disabled={isScoring}
+            whileHover={
+              reduce || isScoring
+                ? undefined
+                : { y: -1 }
+            }
+            whileTap={
+              reduce || isScoring
+                ? undefined
+                : { scale: 0.985 }
+            }
             style={{
-              display: "flex", alignItems: "center", gap: 6,
-              padding: "7px 14px",
-              background: isScoring ? "#F3F4F6" : P,
-              color: isScoring ? "#9CA3AF" : "#fff",
-              border: "none", borderRadius: 7,
-              fontSize: 13, fontWeight: 600,
-              cursor: isScoring ? "not-allowed" : "pointer",
-              flexShrink: 0,
+              display:
+                "inline-flex",
+              alignItems:
+                "center",
+              gap: 7,
+              padding:
+                "8px 11px",
+              borderRadius: 9,
+              border:
+                `1px solid ${
+                  isScoring
+                    ? T.border
+                    : "rgba(155,140,255,0.26)"
+                }`,
+              background:
+                isScoring
+                  ? "rgba(255,255,255,0.03)"
+                  : T.violetDim,
+              color:
+                isScoring
+                  ? T.faint
+                  : "#D2CDFF",
+              cursor:
+                isScoring
+                  ? "not-allowed"
+                  : "pointer",
+              fontSize: 10.5,
+              fontWeight: 800,
             }}
           >
-            {isScoring ? (
-              <>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
-                  style={{ animation: "spin 0.8s linear infinite" }}>
-                  <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
-                </svg>
-                Scoring…
-              </>
-            ) : (
-              <>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-                </svg>
-                {hasScore ? (expanded ? "Hide summary" : "AI summarize") : "AI summarize"}
-              </>
-            )}
-          </button>
+            <Sparkles size={12} />
+
+            {isScoring
+              ? "Scoring..."
+              : hasScore
+              ? expanded
+                ? "Hide summary"
+                : "AI summary"
+              : "AI summarize"}
+          </motion.button>
         </div>
       </div>
 
-      {/* AI summary panel */}
-      {hasScore && expanded && (
-        <div style={{ borderTop: "1px solid #FEE9DF", background: "#FFFBF9", padding: "14px 16px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill={P}>
-              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-            </svg>
-            <span style={{ fontSize: 13, fontWeight: 700, color: P }}>AI summary</span>
+      {/* AI SUMMARY */}
+
+      {hasScore &&
+        expanded && (
+          <div
+            style={{
+              borderTop:
+                "1px solid rgba(155,140,255,0.14)",
+              background:
+                "linear-gradient(145deg, rgba(155,140,255,0.055), rgba(255,255,255,0.015))",
+            }}
+          >
+            <div
+              style={{
+                padding:
+                  "15px 19px 17px",
+              }}
+            >
+              <div
+                style={{
+                  display:
+                    "flex",
+                  alignItems:
+                    "center",
+                  gap: 7,
+                  marginBottom:
+                    9,
+                  color:
+                    T.violet,
+                  fontFamily:
+                    "var(--font-mono)",
+                  fontSize: 9,
+                  letterSpacing:
+                    "0.07em",
+                  textTransform:
+                    "uppercase",
+                }}
+              >
+                <Sparkles size={11} />
+                AI assessment
+              </div>
+
+              <p
+                style={{
+                  margin:
+                    "0 0 15px",
+                  color:
+                    T.muted,
+                  fontSize:
+                    11.5,
+                  lineHeight:
+                    1.7,
+                }}
+              >
+                {
+                  issue
+                    .aiScore!
+                    .explanation
+                }
+              </p>
+
+              <div
+                style={{
+                  display:
+                    "flex",
+                  alignItems:
+                    "center",
+                  gap: 8,
+                }}
+              >
+                <span
+                  style={{
+                    color:
+                      T.faint,
+                    fontFamily:
+                      "var(--font-mono)",
+                    fontSize:
+                      8.5,
+                    textTransform:
+                      "uppercase",
+                  }}
+                >
+                  Difficulty
+                </span>
+
+                <span
+                  style={{
+                    width: 6,
+                    height: 6,
+                    borderRadius:
+                      "50%",
+                    background:
+                      difficulty?.color,
+                    boxShadow:
+                      difficulty
+                        ? `0 0 9px ${difficulty.color}`
+                        : undefined,
+                  }}
+                />
+
+                <span
+                  style={{
+                    color:
+                      difficulty?.color,
+                    fontSize:
+                      10.5,
+                    fontWeight:
+                      750,
+                  }}
+                >
+                  {
+                    difficulty?.label
+                  }
+                </span>
+              </div>
+            </div>
           </div>
-          <p style={{ fontSize: 13, color: "#374151", lineHeight: 1.65, margin: "0 0 14px" }}>
-            {issue.aiScore!.explanation}
-          </p>
-          <div>
-            <p style={{ fontSize: 10, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.06em", margin: "0 0 5px" }}>Difficulty</p>
-            <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#374151" }}>
-              <span style={{ width: 9, height: 9, borderRadius: "50%", background: DIFF_MAP[issue.aiScore!.difficulty].color }} />
-              {DIFF_MAP[issue.aiScore!.difficulty].label}
-            </span>
-          </div>
-        </div>
-      )}
-    </div>
-  )
+        )}
+    </motion.article>
+  );
 }

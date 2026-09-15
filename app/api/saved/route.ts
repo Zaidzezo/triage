@@ -105,74 +105,153 @@ export async function POST(req: NextRequest) {
 
 // ─── GET /api/saved — List saved issues with full card data ──────────────────
 
-export async function GET(req: NextRequest) {
+export async function GET(
+  req: NextRequest
+) {
   // 1. Authenticate
-  let userId: string
+
+  let userId: string;
+
   try {
-    userId = await getAuthenticatedUserId()
+    userId =
+      await getAuthenticatedUserId();
   } catch (err) {
-    return authErrorResponse(err)
+    return authErrorResponse(err);
   }
 
-  // 2. Extract optional search query
-  const { searchParams } = new URL(req.url)
-  const q = searchParams.get("q")?.trim() ?? ""
+  // 2. Search query
 
-  // 3. Fetch saved issues — filter by search query if provided
-  let savedIssues: any[]
+  const { searchParams } =
+    new URL(req.url);
+
+  const q =
+    searchParams.get("q")?.trim() ?? "";
+
+  // 3. Fetch saved issues
+
+  let savedIssues: any[];
+
   try {
-    savedIssues = await prisma.savedIssue.findMany({
-      where: {
-        userId,
-        ...(q && {
-          issue: {
-            OR: [
-              { title: { contains: q, mode: "insensitive" } },
-              { bodyPreview: { contains: q, mode: "insensitive" } },
-              { repo: { fullName: { contains: q, mode: "insensitive" } } },
-            ],
-          },
-        }),
-      },
-      orderBy: { savedAt: "desc" },
-      select: {
-        savedAt: true,
-        issue: {
-          select: {
-            id: true,
-            number: true,
-            title: true,
-            url: true,
-            bodyPreview: true,
-            state: true,
-            authorAssociation: true,
-            commentsCount: true,
-            isAssigned: true,
-            hasLinkedPr: true,
-            createdAt: true,
-            aiScore: {
-              select: {
-                difficulty: true,
-                explanation: true,
-              },
+    savedIssues =
+      await prisma.savedIssue.findMany({
+        where: {
+          userId,
+
+          ...(q && {
+            issue: {
+              OR: [
+                {
+                  title: {
+                    contains: q,
+                    mode: "insensitive",
+                  },
+                },
+                {
+                  bodyPreview: {
+                    contains: q,
+                    mode: "insensitive",
+                  },
+                },
+                {
+                  repo: {
+                    fullName: {
+                      contains: q,
+                      mode: "insensitive",
+                    },
+                  },
+                },
+              ],
             },
-            repo: {
-              select: {
-                fullName: true,
-                language: true,
-                stars: true,
+          }),
+        },
+
+        orderBy: {
+          savedAt: "desc",
+        },
+
+        select: {
+          savedAt: true,
+
+          issue: {
+            select: {
+              id: true,
+              number: true,
+              title: true,
+              url: true,
+              bodyPreview: true,
+              state: true,
+              authorAssociation: true,
+              commentsCount: true,
+              isAssigned: true,
+              hasLinkedPr: true,
+              createdAt: true,
+
+              aiScore: {
+                select: {
+                  difficulty: true,
+                  explanation: true,
+                },
+              },
+
+              repo: {
+                select: {
+                  id: true,
+                  fullName: true,
+                  language: true,
+                  stars: true,
+                  ownerLogin: true,
+                },
               },
             },
           },
         },
-      },
-    })
+      });
   } catch {
     return NextResponse.json(
-      { error: "Database error" },
+      {
+        error: "Database error",
+      },
       { status: 500 }
-    )
+    );
   }
 
-  return NextResponse.json({ saved: savedIssues })
+  /*
+   * At this point we intentionally don't make
+   * GitHub health requests here.
+   *
+   * Saved issues should load quickly.
+   * Health will therefore be "not checked"
+   * unless the repository was part of a
+   * recent discovery search.
+   */
+
+  const saved =
+    savedIssues.map(
+      (item) => ({
+        savedAt: item.savedAt,
+
+        issue: {
+          ...item.issue,
+
+          repo: {
+            ...item.issue.repo,
+
+            health: {
+              reviewedInLast10:
+                false,
+
+              pullRequestsChecked:
+                0,
+
+              reviewedPullRequests:
+                0,
+            },
+          },
+        },
+      })
+    );
+
+  return NextResponse.json({
+    saved,
+  });
 }

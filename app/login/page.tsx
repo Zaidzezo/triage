@@ -904,7 +904,7 @@ function LoginPanel() {
   }}
 >
   <Image
-    src="/logo.png"
+    src="/logo.svg"
     loading="eager"
     alt="Triage"
     fill
@@ -1278,7 +1278,7 @@ export default function LoginPage() {
   }}
 >
   <Image
-    src="/logo.png"
+    src="/logo.svg"
     loading="eager"
     alt="Triage"
     fill
@@ -1464,7 +1464,7 @@ export default function LoginPage() {
           }}
         >
           <Image
-            src="/logo.png"
+            src="/logo.svg"
             loading="eager"
             alt="Triage"
             fill

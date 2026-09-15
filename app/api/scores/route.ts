@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
           difficulty: score.difficulty,
           explanation: score.explanation,
           provider: "b.ai",
-          model: "glm-5.3-flash",
+          model: "qwen3.8-flash",
           scoredAt: new Date(),
         },
       })

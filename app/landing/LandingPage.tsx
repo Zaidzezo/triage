@@ -540,7 +540,7 @@ function Nav() {
   }}
 >
   <Image
-    src="/logo.png"
+    src="/logo.svg"
     loading="eager"
     alt="Triage"
     fill
@@ -986,7 +986,7 @@ function Footer() {
           }}
         >
           <Image
-            src="/logo.png"
+            src="/logo.svg"
             loading="eager"
             alt="Triage"
             fill
