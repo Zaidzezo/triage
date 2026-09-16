@@ -1,6 +1,8 @@
-const GITHUB_GRAPHQL_URL = "https://api.github.com/graphql";
+const GITHUB_GRAPHQL_URL =
+  "https://api.github.com/graphql";
 
-const GITHUB_REST_URL = "https://api.github.com";
+const GITHUB_REST_URL =
+  "https://api.github.com";
 
 // ─────────────────────────────────────────────
 // TYPES
@@ -55,7 +57,6 @@ export interface SearchIssuesPage {
 
 // ─────────────────────────────────────────────
 // SEARCH REPOSITORIES
-// Used when you want repository suggestions/fallbacks
 // ─────────────────────────────────────────────
 
 export async function searchRepositories(
@@ -73,33 +74,41 @@ export async function searchRepositories(
       order: "desc",
     });
 
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-    },
-  });
+  const response = await fetch(
+    url,
+    {
+      headers: {
+        Authorization:
+          `Bearer ${accessToken}`,
+        Accept:
+          "application/vnd.github+json",
+        "X-GitHub-Api-Version":
+          "2022-11-28",
+      },
+    }
+  );
 
   if (!response.ok) {
-    const errorText = await response.text();
+    const errorText =
+      await response.text();
 
     throw new Error(
       `GitHub repository search error ${response.status}: ${errorText}`
     );
   }
 
-  const data = await response.json();
+  const data =
+    await response.json();
 
-  return Array.isArray(data.items) ? data.items : [];
+  return Array.isArray(
+    data.items
+  )
+    ? data.items
+    : [];
 }
 
 // ─────────────────────────────────────────────
 // EXACT REPOSITORY ISSUE FETCH
-// Used for:
-// vercel/next.js
-// facebook/react
-// microsoft/vscode
 // ─────────────────────────────────────────────
 
 export async function fetchRepoIssues(
@@ -202,58 +211,80 @@ export async function fetchRepoIssues(
     }
   `;
 
-  const response = await fetch(GITHUB_GRAPHQL_URL, {
-    method: "POST",
+  const response =
+    await fetch(
+      GITHUB_GRAPHQL_URL,
+      {
+        method: "POST",
 
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
+        headers: {
+          Authorization:
+            `Bearer ${accessToken}`,
+          "Content-Type":
+            "application/json",
+        },
 
-    body: JSON.stringify({
-      query,
-      variables: {
-        owner,
-        repo,
-      },
-    }),
-  });
+        body: JSON.stringify({
+          query,
+          variables: {
+            owner,
+            repo,
+          },
+        }),
+      }
+    );
 
   if (!response.ok) {
-    throw new Error(`GitHub API error: ${response.status}`);
+    throw new Error(
+      `GitHub API error: ${response.status}`
+    );
   }
 
-  const data = await response.json();
+  const data =
+    await response.json();
 
   if (data.errors?.length) {
-    throw new Error(data.errors[0]?.message ?? "GitHub GraphQL error");
+    throw new Error(
+      data.errors[0]?.message ??
+        "GitHub GraphQL error"
+    );
   }
 
-  const repository = data.data?.repository;
+  const repository =
+    data.data?.repository;
 
   if (!repository) {
-    throw new Error("Repository not found");
+    throw new Error(
+      "Repository not found"
+    );
   }
 
-  // ─────────────────────────────────────────────
-  // REPOSITORY HEALTH
-  // Healthy = at least one of latest 10 PRs
-  // has at least one review.
-  // ─────────────────────────────────────────────
+  // ─────────────────────────────────────
+  // Repository health
+  // ─────────────────────────────────────
 
-  const pullRequests = repository.pullRequests?.nodes ?? [];
+  const pullRequests =
+    repository.pullRequests
+      ?.nodes ?? [];
 
-  const reviewedPullRequests = pullRequests.filter(
-    (pullRequest: any) => (pullRequest.reviews?.totalCount ?? 0) > 0
-  ).length;
+  const reviewedPullRequests =
+    pullRequests.filter(
+      (pullRequest: any) =>
+        (
+          pullRequest.reviews
+            ?.totalCount ?? 0
+        ) > 0
+    ).length;
 
   return {
     ...repository,
 
     health: {
-      reviewedInLast10: reviewedPullRequests > 0,
+      reviewedInLast10:
+        reviewedPullRequests > 0,
 
-      pullRequestsChecked: pullRequests.length,
+      pullRequestsChecked:
+        pullRequests.length,
 
       reviewedPullRequests,
     } satisfies RepositoryHealth,
@@ -263,16 +294,19 @@ export async function fetchRepoIssues(
 // ─────────────────────────────────────────────
 // GLOBAL ISSUE SEARCH
 //
-// Examples:
-// book
-// songs
-// programming
-// react
-// school
+// One call = up to 100 raw GitHub results.
 //
-// Searches across multiple repositories.
-// Supports cursor pagination so the caller can
-// page through GitHub's top 1000 results.
+// GitHub performs:
+//   - text search
+//   - issue search
+//   - open-state filtering
+//   - no-assignee filtering
+//
+// We perform:
+//   - repository >= 1000 stars
+//
+// This function returns ONLY qualifying issues,
+// while preserving GitHub's cursor pagination.
 // ─────────────────────────────────────────────
 
 export async function searchIssues(
@@ -337,88 +371,195 @@ export async function searchIssues(
     }
   `;
 
+  // GitHub handles the issue-side filters.
+  //
+  // Star filtering is NOT placed here because
+  // repository stars are repository metadata,
+  // which we already receive below.
   const githubSearchQuery =
-    `(${queryText.trim()}) ` + `is:issue state:open`;
+    `(${queryText.trim()}) ` +
+    `is:issue state:open no:assignee`;
 
-  const response = await fetch(GITHUB_GRAPHQL_URL, {
-    method: "POST",
+  const response =
+    await fetch(
+      GITHUB_GRAPHQL_URL,
+      {
+        method: "POST",
 
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
+        headers: {
+          Authorization:
+            `Bearer ${accessToken}`,
+          "Content-Type":
+            "application/json",
+        },
 
-    body: JSON.stringify({
-      query,
-      variables: {
-        query: githubSearchQuery,
-        cursor: cursor ?? null,
-      },
-    }),
-  });
+        body: JSON.stringify({
+          query,
+          variables: {
+            query:
+              githubSearchQuery,
+            cursor:
+              cursor ?? null,
+          },
+        }),
+      }
+    );
 
   if (!response.ok) {
-    throw new Error(`GitHub search error: ${response.status}`);
+    throw new Error(
+      `GitHub search error: ${response.status}`
+    );
   }
 
-  const data = await response.json();
+  const data =
+    await response.json();
 
   if (data.errors?.length) {
-    throw new Error(data.errors[0]?.message ?? "GitHub issue search failed");
+    throw new Error(
+      data.errors[0]?.message ??
+        "GitHub issue search failed"
+    );
   }
 
-  const searchData = data.data?.search;
+  const searchData =
+    data.data?.search;
 
-  const nodes = searchData?.nodes ?? [];
+  const nodes =
+    searchData?.nodes ?? [];
 
-  const pageInfo = searchData?.pageInfo ?? {
-    hasNextPage: false,
-    endCursor: null,
-  };
+  // ─────────────────────────────────────
+  // Filter repositories to 1000+ stars
+  // ─────────────────────────────────────
 
-  const issues = nodes
-    .filter((issue: any) => issue?.repository)
-    .map((issue: any): SearchIssueResult => {
-      const commentsCount = issue.comments?.totalCount ?? 0;
+  const issues =
+    nodes
+      .filter((issue: any) => {
+        if (
+          !issue?.repository
+        ) {
+          return false;
+        }
 
-      const isAssigned = (issue.assignees?.nodes?.length ?? 0) > 0;
+        const isAssigned =
+          (
+            issue.assignees
+              ?.nodes?.length ??
+            0
+          ) > 0;
 
-      const hasLinkedPr = false;
+        const stars =
+          issue.repository
+            .stargazerCount ??
+          0;
 
-      return {
-        id: issue.id,
-        number: issue.number,
-        title: issue.title,
-        body: issue.body ? issue.body.slice(0, 700) : null,
-        state: issue.state,
-        url: issue.url,
-        createdAt: issue.createdAt,
-        authorAssociation: issue.authorAssociation,
-        commentsCount,
-        isAssigned,
-        hasLinkedPr,
-        repository: {
-          id: issue.repository.id,
-          nameWithOwner: issue.repository.nameWithOwner,
-          description: issue.repository.description,
-          stars: issue.repository.stargazerCount,
-          language: issue.repository.primaryLanguage?.name ?? null,
-          ownerLogin: issue.repository.owner?.login ?? "",
-        },
-      };
-    });
+        return (
+          !isAssigned &&
+          stars >= 1000
+        );
+      })
+      .map(
+        (
+          issue: any
+        ): SearchIssueResult => {
+          const commentsCount =
+            issue.comments
+              ?.totalCount ??
+            0;
+
+          const isAssigned =
+            (
+              issue.assignees
+                ?.nodes?.length ??
+              0
+            ) > 0;
+
+          return {
+            id:
+              issue.id,
+
+            number:
+              issue.number,
+
+            title:
+              issue.title,
+
+            body:
+              issue.body
+                ? issue.body.slice(
+                    0,
+                    700
+                  )
+                : null,
+
+            state:
+              issue.state,
+
+            url:
+              issue.url,
+
+            createdAt:
+              issue.createdAt,
+
+            authorAssociation:
+              issue.authorAssociation,
+
+            commentsCount,
+
+            isAssigned,
+
+            hasLinkedPr:
+              false,
+
+            repository: {
+              id:
+                issue.repository
+                  .id,
+
+              nameWithOwner:
+                issue.repository
+                  .nameWithOwner,
+
+              description:
+                issue.repository
+                  .description,
+
+              stars:
+                issue.repository
+                  .stargazerCount,
+
+              language:
+                issue.repository
+                  .primaryLanguage
+                  ?.name ??
+                null,
+
+              ownerLogin:
+                issue.repository
+                  .owner
+                  ?.login ??
+                "",
+            },
+          };
+        }
+      );
 
   return {
     issues,
-    hasNextPage: pageInfo.hasNextPage,
-    endCursor: pageInfo.endCursor,
+
+    hasNextPage:
+      searchData?.pageInfo
+        ?.hasNextPage ??
+      false,
+
+    endCursor:
+      searchData?.pageInfo
+        ?.endCursor ??
+      null,
   };
 }
 
 // ─────────────────────────────────────────────
 // BATCH REPOSITORY HEALTH
-//
-// Checks latest 10 PRs for each repository.
 // ─────────────────────────────────────────────
 
 export async function fetchRepositoriesHealth(
@@ -427,28 +568,52 @@ export async function fetchRepositoriesHealth(
     name: string;
   }[],
   accessToken: string
-): Promise<Record<string, RepositoryHealth>> {
-  // We limit this because each repository
-  // requires PR/review information.
-  const limitedRepositories = repositories.slice(0, 12);
+): Promise<
+  Record<
+    string,
+    RepositoryHealth
+  >
+> {
+  const limitedRepositories =
+    repositories.slice(
+      0,
+      12
+    );
 
-  if (limitedRepositories.length === 0) {
+  if (
+    limitedRepositories.length ===
+    0
+  ) {
     return {};
   }
 
-  const variables: Record<string, string> = {};
+  const variables: Record<
+    string,
+    string
+  > = {};
 
-  const repositorySelections = limitedRepositories
-    .map((repository, index) => {
-      const ownerVariable = `owner${index}`;
+  const repositorySelections =
+    limitedRepositories
+      .map(
+        (
+          repository,
+          index
+        ) => {
+          const ownerVariable =
+            `owner${index}`;
 
-      const nameVariable = `name${index}`;
+          const nameVariable =
+            `name${index}`;
 
-      variables[ownerVariable] = repository.owner;
+          variables[
+            ownerVariable
+          ] = repository.owner;
 
-      variables[nameVariable] = repository.name;
+          variables[
+            nameVariable
+          ] = repository.name;
 
-      return `
+          return `
             repo${index}: repository(
               owner: $${ownerVariable}
               name: $${nameVariable}
@@ -475,12 +640,20 @@ export async function fetchRepositoriesHealth(
               }
             }
           `;
-    })
-    .join("\n");
+        }
+      )
+      .join("\n");
 
-  const variableDefinitions = limitedRepositories
-    .map((_, index) => `$owner${index}: String!, $name${index}: String!`)
-    .join(", ");
+  const variableDefinitions =
+    limitedRepositories
+      .map(
+        (
+          _,
+          index
+        ) =>
+          `$owner${index}: String!, $name${index}: String!`
+      )
+      .join(", ");
 
   const query = `
     query RepositoryHealth(
@@ -490,51 +663,87 @@ export async function fetchRepositoriesHealth(
     }
   `;
 
-  const response = await fetch(GITHUB_GRAPHQL_URL, {
-    method: "POST",
+  const response =
+    await fetch(
+      GITHUB_GRAPHQL_URL,
+      {
+        method: "POST",
 
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
+        headers: {
+          Authorization:
+            `Bearer ${accessToken}`,
+          "Content-Type":
+            "application/json",
+        },
 
-    body: JSON.stringify({
-      query,
-      variables,
-    }),
-  });
+        body: JSON.stringify({
+          query,
+          variables,
+        }),
+      }
+    );
 
   if (!response.ok) {
-    throw new Error(`GitHub health API error: ${response.status}`);
-  }
-
-  const data = await response.json();
-
-  if (data.errors?.length) {
     throw new Error(
-      data.errors[0]?.message ?? "Failed to calculate repository health"
+      `GitHub health API error: ${response.status}`
     );
   }
 
-  const result: Record<string, RepositoryHealth> = {};
+  const data =
+    await response.json();
 
-  limitedRepositories.forEach((repository, index) => {
-    const githubRepository = data.data?.[`repo${index}`];
+  if (data.errors?.length) {
+    throw new Error(
+      data.errors[0]?.message ??
+        "Failed to calculate repository health"
+    );
+  }
 
-    const pullRequests = githubRepository?.pullRequests?.nodes ?? [];
+  const result: Record<
+    string,
+    RepositoryHealth
+  > = {};
 
-    const reviewedPullRequests = pullRequests.filter(
-      (pullRequest: any) => (pullRequest.reviews?.totalCount ?? 0) > 0
-    ).length;
+  limitedRepositories.forEach(
+    (
+      repository,
+      index
+    ) => {
+      const githubRepository =
+        data.data?.[
+          `repo${index}`
+        ];
 
-    result[`${repository.owner}/${repository.name}`] = {
-      reviewedInLast10: reviewedPullRequests > 0,
+      const pullRequests =
+        githubRepository
+          ?.pullRequests
+          ?.nodes ?? [];
 
-      pullRequestsChecked: pullRequests.length,
+      const reviewedPullRequests =
+        pullRequests.filter(
+          (pullRequest: any) =>
+            (
+              pullRequest
+                .reviews
+                ?.totalCount ??
+              0
+            ) > 0
+        ).length;
 
-      reviewedPullRequests,
-    };
-  });
+      result[
+        `${repository.owner}/${repository.name}`
+      ] = {
+        reviewedInLast10:
+          reviewedPullRequests >
+          0,
+
+        pullRequestsChecked:
+          pullRequests.length,
+
+        reviewedPullRequests,
+      };
+    }
+  );
 
   return result;
 }
