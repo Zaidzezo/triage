@@ -8,7 +8,6 @@ import {
 import { motion } from "framer-motion";
 import { Inter, JetBrains_Mono, Space_Grotesk } from "next/font/google";
 
-import Navbar from "../components/Navbar";
 import IssueCard, {
   Issue,
   RepoInfo,
@@ -145,8 +144,6 @@ export default function SavedPage() {
           "var(--font-inter), system-ui, sans-serif",
       }}
     >
-      <Navbar />
-
       <div
         style={{
           maxWidth: 1120,
