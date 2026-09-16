@@ -74,6 +74,7 @@ const SUGGESTED = [
 ];
 
 const DAY = 24 * 60 * 60 * 1000;
+const PAGE_SIZE = 30;
 
 function filterIssues(issues: Issue[], filters: Filters): Issue[] {
   const now = Date.now();
@@ -486,6 +487,7 @@ export default function HomeContent() {
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [sort, setSort] = useState<SortKey>("newest");
   const [sortOpen, setSortOpen] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
 
   const sortRef = useRef<HTMLDivElement>(null);
   const lastFetchedQuery = useRef<string | null>(null);
@@ -548,6 +550,7 @@ async function fetchIssues(queryOverride?: string) {
   setSortOpen(false);
   setScores({});
   setScoringIds(new Set());
+  setCurrentPage(1);
 
   try {
     const response = await fetch("/api/issues", {
@@ -698,6 +701,34 @@ async function fetchIssues(queryOverride?: string) {
   // Derived from repositoryCount — no need to iterate issuesWithScores again
   const isGlobalSearch = repositoryCount > 1;
   const hasResults = issuesWithScores.length > 0;
+
+  const goToPage = (page: number) => {
+    setCurrentPage(page);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const totalPages = Math.max(1, Math.ceil(filteredIssues.length / PAGE_SIZE));
+
+  const pagedIssues = useMemo(
+    () =>
+      filteredIssues.slice(
+        (currentPage - 1) * PAGE_SIZE,
+        currentPage * PAGE_SIZE
+      ),
+    [filteredIssues, currentPage]
+  );
+
+  const pageNumbers = useMemo<(number | "…")[]>(() => {
+    const pages: (number | "…")[] = [];
+    for (let p = 1; p <= totalPages; p++) {
+      if (p === 1 || p === totalPages || Math.abs(p - currentPage) <= 2) {
+        const last = pages[pages.length - 1];
+        if (typeof last === "number" && p - last > 1) pages.push("…");
+        pages.push(p);
+      }
+    }
+    return pages;
+  }, [totalPages, currentPage]);
 
   // ── Render ────────────────────────────────────────────────────────
   return (
@@ -952,8 +983,14 @@ async function fetchIssues(queryOverride?: string) {
           >
             <FilterSidebar
               filters={filters}
-              onChange={setFilters}
-              onClear={() => setFilters(DEFAULT_FILTERS)}
+              onChange={(next) => {
+                setFilters(next);
+                setCurrentPage(1);
+              }}
+              onClear={() => {
+                setFilters(DEFAULT_FILTERS);
+                setCurrentPage(1);
+              }}
               availableLanguages={availableLanguages}
             />
 
@@ -1281,6 +1318,7 @@ async function fetchIssues(queryOverride?: string) {
                               onClick={() => {
                                 setSort(key);
                                 setSortOpen(false);
+                                setCurrentPage(1);
                               }}
                               style={{
                                 width: "100%",
@@ -1334,7 +1372,10 @@ async function fetchIssues(queryOverride?: string) {
                         </p>
                         <button
                           type="button"
-                          onClick={() => setFilters(DEFAULT_FILTERS)}
+                          onClick={() => {
+                            setFilters(DEFAULT_FILTERS);
+                            setCurrentPage(1);
+                          }}
                           style={{
                             marginTop: 18,
                             padding: "9px 13px",
@@ -1352,30 +1393,121 @@ async function fetchIssues(queryOverride?: string) {
                       </div>
                     </GlassCard>
                   ) : (
-                    filteredIssues.map((issue, index) => {
-                      if (!issue.repo) return null;
-                      return (
-                        <motion.div
-                          key={issue.id}
-                          initial={{ opacity: 0, y: 12 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{
-                            duration: 0.45,
-                            delay: index * 0.025,
-                            ease: EASE,
+                    <>
+                      {pagedIssues.map((issue, index) => {
+                        if (!issue.repo) return null;
+                        return (
+                          <motion.div
+                            key={issue.id}
+                            initial={{ opacity: 0, y: 12 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{
+                              duration: 0.45,
+                              delay: index * 0.025,
+                              ease: EASE,
+                            }}
+                          >
+                            <IssueCard
+                              issue={issue}
+                              repo={issue.repo}
+                              isSaved={savedIds.has(issue.id)}
+                              isScoring={scoringIds.has(issue.id)}
+                              onSave={() => handleToggleSave(issue.id)}
+                              onScore={() => handleScore(issue.id)}
+                            />
+                          </motion.div>
+                        );
+                      })}
+
+                      {/* Google-style pagination */}
+                      {totalPages > 1 && (
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "center",
+                            alignItems: "center",
+                            gap: 4,
+                            marginTop: 32,
+                            paddingBottom: 8,
+                            flexWrap: "wrap",
                           }}
                         >
-                          <IssueCard
-                            issue={issue}
-                            repo={issue.repo}
-                            isSaved={savedIds.has(issue.id)}
-                            isScoring={scoringIds.has(issue.id)}
-                            onSave={() => handleToggleSave(issue.id)}
-                            onScore={() => handleScore(issue.id)}
-                          />
-                        </motion.div>
-                      );
-                    })
+                          <button
+                            type="button"
+                            disabled={currentPage === 1}
+                            onClick={() => goToPage(currentPage - 1)}
+                            style={{
+                              height: 36,
+                              padding: "0 13px",
+                              borderRadius: 8,
+                              border: `1px solid ${T.border}`,
+                              background: "transparent",
+                              color: currentPage === 1 ? T.faint : T.muted,
+                              cursor: currentPage === 1 ? "not-allowed" : "pointer",
+                              fontSize: 12,
+                              fontWeight: 600,
+                            }}
+                          >
+                            ← Prev
+                          </button>
+
+                          {pageNumbers.map((item, i) =>
+                            item === "…" ? (
+                              <span
+                                key={`ellipsis-${i}`}
+                                style={{ color: T.faint, fontSize: 12, padding: "0 4px" }}
+                              >
+                                …
+                              </span>
+                            ) : (
+                              <button
+                                key={item}
+                                type="button"
+                                onClick={() => goToPage(item)}
+                                style={{
+                                  width: 36,
+                                  height: 36,
+                                  borderRadius: 8,
+                                  border: `1px solid ${
+                                    currentPage === item
+                                      ? "rgba(155,140,255,0.45)"
+                                      : T.border
+                                  }`,
+                                  background:
+                                    currentPage === item ? T.violetDim : "transparent",
+                                  color: currentPage === item ? "#D2CDFF" : T.muted,
+                                  cursor: "pointer",
+                                  fontSize: 12,
+                                  fontWeight: currentPage === item ? 700 : 500,
+                                }}
+                              >
+                                {item}
+                              </button>
+                            )
+                          )}
+
+                          <button
+                            type="button"
+                            disabled={currentPage === totalPages}
+                            onClick={() => goToPage(currentPage + 1)}
+                            style={{
+                              height: 36,
+                              padding: "0 13px",
+                              borderRadius: 8,
+                              border: `1px solid ${T.border}`,
+                              background: "transparent",
+                              color: currentPage === totalPages ? T.faint : T.muted,
+                              cursor:
+                                currentPage === totalPages ? "not-allowed" : "pointer",
+                              fontSize: 12,
+                              fontWeight: 600,
+                            }}
+                          >
+                            Next →
+                          </button>
+                        </div>
+                      )}
+                    </>
                   )}
                 </motion.div>
               )}

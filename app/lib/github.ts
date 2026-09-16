@@ -1,8 +1,6 @@
-const GITHUB_GRAPHQL_URL =
-  "https://api.github.com/graphql";
+const GITHUB_GRAPHQL_URL = "https://api.github.com/graphql";
 
-const GITHUB_REST_URL =
-  "https://api.github.com";
+const GITHUB_REST_URL = "https://api.github.com";
 
 // ─────────────────────────────────────────────
 // TYPES
@@ -49,6 +47,12 @@ export interface SearchIssueResult {
   };
 }
 
+export interface SearchIssuesPage {
+  issues: SearchIssueResult[];
+  hasNextPage: boolean;
+  endCursor: string | null;
+}
+
 // ─────────────────────────────────────────────
 // SEARCH REPOSITORIES
 // Used when you want repository suggestions/fallbacks
@@ -58,8 +62,7 @@ export async function searchRepositories(
   query: string,
   accessToken: string
 ): Promise<SearchRepository[]> {
-  const q =
-    `${query} in:name,description,readme archived:false fork:false`;
+  const q = `${query} in:name,description,readme archived:false fork:false`;
 
   const url =
     `${GITHUB_REST_URL}/search/repositories?` +
@@ -70,34 +73,25 @@ export async function searchRepositories(
       order: "desc",
     });
 
-  const response = await fetch(
-    url,
-    {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept:
-          "application/vnd.github+json",
-        "X-GitHub-Api-Version":
-          "2022-11-28",
-      },
-    }
-  );
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+  });
 
   if (!response.ok) {
-    const errorText =
-      await response.text();
+    const errorText = await response.text();
 
     throw new Error(
       `GitHub repository search error ${response.status}: ${errorText}`
     );
   }
 
-  const data =
-    await response.json();
+  const data = await response.json();
 
-  return Array.isArray(data.items)
-    ? data.items
-    : [];
+  return Array.isArray(data.items) ? data.items : [];
 }
 
 // ─────────────────────────────────────────────
@@ -208,51 +202,37 @@ export async function fetchRepoIssues(
     }
   `;
 
-  const response =
-    await fetch(
-      GITHUB_GRAPHQL_URL,
-      {
-        method: "POST",
+  const response = await fetch(GITHUB_GRAPHQL_URL, {
+    method: "POST",
 
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type":
-            "application/json",
-        },
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
 
-        body: JSON.stringify({
-          query,
-          variables: {
-            owner,
-            repo,
-          },
-        }),
-      }
-    );
+    body: JSON.stringify({
+      query,
+      variables: {
+        owner,
+        repo,
+      },
+    }),
+  });
 
   if (!response.ok) {
-    throw new Error(
-      `GitHub API error: ${response.status}`
-    );
+    throw new Error(`GitHub API error: ${response.status}`);
   }
 
-  const data =
-    await response.json();
+  const data = await response.json();
 
   if (data.errors?.length) {
-    throw new Error(
-      data.errors[0]?.message ??
-        "GitHub GraphQL error"
-    );
+    throw new Error(data.errors[0]?.message ?? "GitHub GraphQL error");
   }
 
-  const repository =
-    data.data?.repository;
+  const repository = data.data?.repository;
 
   if (!repository) {
-    throw new Error(
-      "Repository not found"
-    );
+    throw new Error("Repository not found");
   }
 
   // ─────────────────────────────────────────────
@@ -261,26 +241,19 @@ export async function fetchRepoIssues(
   // has at least one review.
   // ─────────────────────────────────────────────
 
-  const pullRequests =
-    repository.pullRequests
-      ?.nodes ?? [];
+  const pullRequests = repository.pullRequests?.nodes ?? [];
 
-  const reviewedPullRequests =
-    pullRequests.filter(
-      (pullRequest: any) =>
-        (pullRequest.reviews
-          ?.totalCount ?? 0) > 0
-    ).length;
+  const reviewedPullRequests = pullRequests.filter(
+    (pullRequest: any) => (pullRequest.reviews?.totalCount ?? 0) > 0
+  ).length;
 
   return {
     ...repository,
 
     health: {
-      reviewedInLast10:
-        reviewedPullRequests > 0,
+      reviewedInLast10: reviewedPullRequests > 0,
 
-      pullRequestsChecked:
-        pullRequests.length,
+      pullRequestsChecked: pullRequests.length,
 
       reviewedPullRequests,
     } satisfies RepositoryHealth,
@@ -298,21 +271,31 @@ export async function fetchRepoIssues(
 // school
 //
 // Searches across multiple repositories.
+// Supports cursor pagination so the caller can
+// page through GitHub's top 1000 results.
 // ─────────────────────────────────────────────
 
 export async function searchIssues(
   queryText: string,
-  accessToken: string
-): Promise<SearchIssueResult[]> {
+  accessToken: string,
+  cursor?: string
+): Promise<SearchIssuesPage> {
   const query = `
     query SearchIssues(
       $query: String!
+      $cursor: String
     ) {
       search(
         query: $query
         type: ISSUE
         first: 100
+        after: $cursor
       ) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+
         nodes {
           ... on Issue {
             id
@@ -331,26 +314,6 @@ export async function searchIssues(
             assignees(first: 1) {
               nodes {
                 login
-              }
-            }
-
-            timelineItems(
-              first: 10
-              itemTypes: [
-                CROSS_REFERENCED_EVENT
-              ]
-            ) {
-              nodes {
-                ... on CrossReferencedEvent {
-                  willCloseTarget
-
-                  source {
-                    ... on PullRequest {
-                      id
-                      state
-                    }
-                  }
-                }
               }
             }
 
@@ -375,137 +338,81 @@ export async function searchIssues(
   `;
 
   const githubSearchQuery =
-    `(${queryText.trim()}) ` +
-    `is:issue state:open`;
+    `(${queryText.trim()}) ` + `is:issue state:open`;
 
-  const response =
-    await fetch(
-      GITHUB_GRAPHQL_URL,
-      {
-        method: "POST",
+  const response = await fetch(GITHUB_GRAPHQL_URL, {
+    method: "POST",
 
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type":
-            "application/json",
-        },
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
 
-        body: JSON.stringify({
-          query,
-          variables: {
-            query:
-              githubSearchQuery,
-          },
-        }),
-      }
-    );
+    body: JSON.stringify({
+      query,
+      variables: {
+        query: githubSearchQuery,
+        cursor: cursor ?? null,
+      },
+    }),
+  });
 
   if (!response.ok) {
-    throw new Error(
-      `GitHub search error: ${response.status}`
-    );
+    throw new Error(`GitHub search error: ${response.status}`);
   }
 
-  const data =
-    await response.json();
+  const data = await response.json();
 
   if (data.errors?.length) {
-    throw new Error(
-      data.errors[0]?.message ??
-        "GitHub issue search failed"
-    );
+    throw new Error(data.errors[0]?.message ?? "GitHub issue search failed");
   }
 
-  const nodes =
-    data.data?.search
-      ?.nodes ?? [];
+  const searchData = data.data?.search;
 
-  return nodes
-    .filter(
-      (issue: any) =>
-        issue?.repository
-    )
-    .map(
-      (issue: any): SearchIssueResult => {
-        const commentsCount =
-          issue.comments
-            ?.totalCount ?? 0;
+  const nodes = searchData?.nodes ?? [];
 
-        const isAssigned =
-          (issue.assignees
-            ?.nodes?.length ??
-            0) > 0;
+  const pageInfo = searchData?.pageInfo ?? {
+    hasNextPage: false,
+    endCursor: null,
+  };
 
-        const hasLinkedPr =
-          issue.timelineItems
-            ?.nodes?.some(
-              (node: any) =>
-                node?.willCloseTarget &&
-                node?.source?.id
-            ) ?? false;
+  const issues = nodes
+    .filter((issue: any) => issue?.repository)
+    .map((issue: any): SearchIssueResult => {
+      const commentsCount = issue.comments?.totalCount ?? 0;
 
-        return {
-          id: issue.id,
+      const isAssigned = (issue.assignees?.nodes?.length ?? 0) > 0;
 
-          number:
-            issue.number,
+      const hasLinkedPr = false;
 
-          title:
-            issue.title,
+      return {
+        id: issue.id,
+        number: issue.number,
+        title: issue.title,
+        body: issue.body ? issue.body.slice(0, 700) : null,
+        state: issue.state,
+        url: issue.url,
+        createdAt: issue.createdAt,
+        authorAssociation: issue.authorAssociation,
+        commentsCount,
+        isAssigned,
+        hasLinkedPr,
+        repository: {
+          id: issue.repository.id,
+          nameWithOwner: issue.repository.nameWithOwner,
+          description: issue.repository.description,
+          stars: issue.repository.stargazerCount,
+          language: issue.repository.primaryLanguage?.name ?? null,
+          ownerLogin: issue.repository.owner?.login ?? "",
+        },
+      };
+    });
 
-          body: issue.body
-            ? issue.body.slice(
-                0,
-                700
-              )
-            : null,
-
-          state:
-            issue.state,
-
-          url:
-            issue.url,
-
-          createdAt:
-            issue.createdAt,
-
-          authorAssociation:
-            issue.authorAssociation,
-
-          commentsCount,
-
-          isAssigned,
-
-          hasLinkedPr,
-
-          repository: {
-            id:
-              issue.repository.id,
-
-            nameWithOwner:
-              issue.repository
-                .nameWithOwner,
-
-            description:
-              issue.repository
-                .description,
-
-            stars:
-              issue.repository
-                .stargazerCount,
-
-            language:
-              issue.repository
-                .primaryLanguage
-                ?.name ?? null,
-
-            ownerLogin:
-              issue.repository
-                .owner?.login ?? "",
-          },
-        };
-      }
-    );
+  return {
+    issues,
+    hasNextPage: pageInfo.hasNextPage,
+    endCursor: pageInfo.endCursor,
+  };
 }
 
 // ─────────────────────────────────────────────
@@ -520,45 +427,28 @@ export async function fetchRepositoriesHealth(
     name: string;
   }[],
   accessToken: string
-): Promise<
-  Record<string, RepositoryHealth>
-> {
+): Promise<Record<string, RepositoryHealth>> {
   // We limit this because each repository
   // requires PR/review information.
-  const limitedRepositories =
-    repositories.slice(0, 12);
+  const limitedRepositories = repositories.slice(0, 12);
 
-  if (
-    limitedRepositories.length ===
-    0
-  ) {
+  if (limitedRepositories.length === 0) {
     return {};
   }
 
-  const variables: Record<
-    string,
-    string
-  > = {};
+  const variables: Record<string, string> = {};
 
-  const repositorySelections =
-    limitedRepositories
-      .map(
-        (repository, index) => {
-          const ownerVariable =
-            `owner${index}`;
+  const repositorySelections = limitedRepositories
+    .map((repository, index) => {
+      const ownerVariable = `owner${index}`;
 
-          const nameVariable =
-            `name${index}`;
+      const nameVariable = `name${index}`;
 
-          variables[
-            ownerVariable
-          ] = repository.owner;
+      variables[ownerVariable] = repository.owner;
 
-          variables[
-            nameVariable
-          ] = repository.name;
+      variables[nameVariable] = repository.name;
 
-          return `
+      return `
             repo${index}: repository(
               owner: $${ownerVariable}
               name: $${nameVariable}
@@ -585,17 +475,12 @@ export async function fetchRepositoriesHealth(
               }
             }
           `;
-        }
-      )
-      .join("\n");
+    })
+    .join("\n");
 
-  const variableDefinitions =
-    limitedRepositories
-      .map(
-        (_, index) =>
-          `$owner${index}: String!, $name${index}: String!`
-      )
-      .join(", ");
+  const variableDefinitions = limitedRepositories
+    .map((_, index) => `$owner${index}: String!, $name${index}: String!`)
+    .join(", ");
 
   const query = `
     query RepositoryHealth(
@@ -605,80 +490,51 @@ export async function fetchRepositoriesHealth(
     }
   `;
 
-  const response =
-    await fetch(
-      GITHUB_GRAPHQL_URL,
-      {
-        method: "POST",
+  const response = await fetch(GITHUB_GRAPHQL_URL, {
+    method: "POST",
 
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type":
-            "application/json",
-        },
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
 
-        body: JSON.stringify({
-          query,
-          variables,
-        }),
-      }
-    );
+    body: JSON.stringify({
+      query,
+      variables,
+    }),
+  });
 
   if (!response.ok) {
-    throw new Error(
-      `GitHub health API error: ${response.status}`
-    );
+    throw new Error(`GitHub health API error: ${response.status}`);
   }
 
-  const data =
-    await response.json();
+  const data = await response.json();
 
   if (data.errors?.length) {
     throw new Error(
-      data.errors[0]?.message ??
-        "Failed to calculate repository health"
+      data.errors[0]?.message ?? "Failed to calculate repository health"
     );
   }
 
-  const result: Record<
-    string,
-    RepositoryHealth
-  > = {};
+  const result: Record<string, RepositoryHealth> = {};
 
-  limitedRepositories.forEach(
-    (repository, index) => {
-      const githubRepository =
-        data.data?.[
-          `repo${index}`
-        ];
+  limitedRepositories.forEach((repository, index) => {
+    const githubRepository = data.data?.[`repo${index}`];
 
-      const pullRequests =
-        githubRepository
-          ?.pullRequests
-          ?.nodes ?? [];
+    const pullRequests = githubRepository?.pullRequests?.nodes ?? [];
 
-      const reviewedPullRequests =
-        pullRequests.filter(
-          (pullRequest: any) =>
-            (pullRequest.reviews
-              ?.totalCount ?? 0) >
-            0
-        ).length;
+    const reviewedPullRequests = pullRequests.filter(
+      (pullRequest: any) => (pullRequest.reviews?.totalCount ?? 0) > 0
+    ).length;
 
-      result[
-        `${repository.owner}/${repository.name}`
-      ] = {
-        reviewedInLast10:
-          reviewedPullRequests >
-          0,
+    result[`${repository.owner}/${repository.name}`] = {
+      reviewedInLast10: reviewedPullRequests > 0,
 
-        pullRequestsChecked:
-          pullRequests.length,
+      pullRequestsChecked: pullRequests.length,
 
-        reviewedPullRequests,
-      };
-    }
-  );
+      reviewedPullRequests,
+    };
+  });
 
   return result;
 }
