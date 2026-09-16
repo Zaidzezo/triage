@@ -10,7 +10,6 @@ import {
   ChevronDown,
   Clock3,
   Compass,
-  Search,
   UserRound,
   LogOut,
 } from "lucide-react";
@@ -19,13 +18,14 @@ import {
   signOut,
   useSession,
 } from "next-auth/react";
-import {
-  usePathname,
-  useRouter,
-} from "next/navigation";
+import { usePathname } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
-import { Inter, JetBrains_Mono, Space_Grotesk } from "next/font/google";
+import {
+  Inter,
+  JetBrains_Mono,
+  Space_Grotesk,
+} from "next/font/google";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -58,14 +58,11 @@ const T = {
 export default function Navbar() {
   const { data: session } = useSession();
 
-  const router = useRouter();
   const pathname = usePathname();
 
-  const [query, setQuery] = useState("");
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Close avatar dropdown on outside click
   useEffect(() => {
@@ -77,8 +74,12 @@ export default function Navbar() {
         setDropdownOpen(false);
       }
     };
+
     document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+
+    return () => {
+      document.removeEventListener("mousedown", handler);
+    };
   }, []);
 
   // Close avatar dropdown on Escape key
@@ -88,42 +89,39 @@ export default function Navbar() {
         setDropdownOpen(false);
       }
     };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, []);
 
-  // Wire up the "/" shortcut to focus the search input
-  useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      if (
-        event.key === "/" &&
-        document.activeElement?.tagName !== "INPUT" &&
-        document.activeElement?.tagName !== "TEXTAREA"
-      ) {
-        event.preventDefault();
-        searchInputRef.current?.focus();
-      }
+    document.addEventListener("keydown", handler);
+
+    return () => {
+      document.removeEventListener("keydown", handler);
     };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
   }, []);
-
-  function handleSearch(event: React.FormEvent) {
-    event.preventDefault();
-    const cleaned = query.trim();
-    if (!cleaned) return;
-    router.push(`/?repo=${encodeURIComponent(cleaned)}`);
-  }
 
   // Show at most 2 initials; fall back gracefully if name is missing
   const rawName =
     session?.user?.githubUsername ?? session?.user?.name ?? "";
-  const initials = rawName.length > 0 ? rawName.slice(0, 2).toUpperCase() : "?";
+
+  const initials =
+    rawName.length > 0
+      ? rawName.slice(0, 2).toUpperCase()
+      : "?";
 
   const links = [
-    { href: "/", label: "Discover", icon: <Compass size={14} /> },
-    { href: "/saved", label: "Saved", icon: <Bookmark size={14} /> },
-    { href: "/activity", label: "Activity", icon: <Clock3 size={14} /> },
+    {
+      href: "/",
+      label: "Discover",
+      icon: <Compass size={14} />,
+    },
+    {
+      href: "/saved",
+      label: "Saved",
+      icon: <Bookmark size={14} />,
+    },
+    {
+      href: "/activity",
+      label: "Activity",
+      icon: <Clock3 size={14} />,
+    },
   ];
 
   return (
@@ -161,7 +159,7 @@ export default function Navbar() {
         }}
       />
 
-      {/* Logo*/}
+      {/* Logo */}
       <Link
         href="/"
         style={{
@@ -184,59 +182,20 @@ export default function Navbar() {
         />
       </Link>
 
-      {/* Search */}
-      <form onSubmit={handleSearch} style={{ flex: 1, maxWidth: 575 }}>
-        <div
-          style={{
-            height: 39,
-            display: "flex",
-            alignItems: "center",
-            gap: 9,
-            padding: "0 12px",
-            borderRadius: 10,
-            border: `1px solid ${T.border}`,
-            background: "rgba(255,255,255,0.025)",
-            boxShadow: "inset 0 1px 0 rgba(255,255,255,0.035)",
-          }}
-        >
-          <Search size={14} color={T.faint} />
-
-          <input
-            ref={searchInputRef}
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Find issues by repository..."
-            style={{
-              flex: 1,
-              minWidth: 0,
-              border: "none",
-              outline: "none",
-              background: "transparent",
-              color: T.text,
-              fontFamily: "var(--font-mono)",
-              fontSize: 10.5,
-            }}
-          />
-
-          <span
-            style={{
-              padding: "3px 6px",
-              borderRadius: 5,
-              border: `1px solid ${T.border}`,
-              color: T.faint,
-              fontFamily: "var(--font-mono)",
-              fontSize: 8,
-            }}
-          >
-            /
-          </span>
-        </div>
-      </form>
+      {/* Push everything else to the right */}
+      <div style={{ flex: 1 }} />
 
       {/* Nav links */}
-      <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 3,
+        }}
+      >
         {links.map(({ href, label, icon }) => {
           const active = pathname === href;
+
           return (
             <Link
               key={href}
@@ -250,8 +209,12 @@ export default function Navbar() {
                 border: active
                   ? "1px solid rgba(155,140,255,0.20)"
                   : "1px solid transparent",
-                background: active ? T.violetDim : "transparent",
-                color: active ? "#D2CDFF" : T.muted,
+                background: active
+                  ? T.violetDim
+                  : "transparent",
+                color: active
+                  ? "#D2CDFF"
+                  : T.muted,
                 textDecoration: "none",
                 fontSize: 11,
                 fontWeight: active ? 700 : 500,
@@ -267,9 +230,17 @@ export default function Navbar() {
 
       {/* Account */}
       {session ? (
-        <div ref={dropdownRef} style={{ position: "relative", marginLeft: 4 }}>
+        <div
+          ref={dropdownRef}
+          style={{
+            position: "relative",
+            marginLeft: 4,
+          }}
+        >
           <button
-            onClick={() => setDropdownOpen((prev) => !prev)}
+            onClick={() =>
+              setDropdownOpen((prev) => !prev)
+            }
             aria-expanded={dropdownOpen}
             aria-haspopup="true"
             style={{
@@ -314,7 +285,11 @@ export default function Navbar() {
                 {initials}
               </div>
             )}
-            <ChevronDown size={12} color={T.faint} />
+
+            <ChevronDown
+              size={12}
+              color={T.faint}
+            />
           </button>
 
           {dropdownOpen && (
@@ -331,7 +306,8 @@ export default function Navbar() {
                 background: "rgba(13,16,24,0.97)",
                 backdropFilter: "blur(25px)",
                 WebkitBackdropFilter: "blur(25px)",
-                boxShadow: "0 25px 70px rgba(0,0,0,0.45)",
+                boxShadow:
+                  "0 25px 70px rgba(0,0,0,0.45)",
               }}
             >
               <div
@@ -340,8 +316,18 @@ export default function Navbar() {
                   borderBottom: `1px solid ${T.border}`,
                 }}
               >
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <UserRound size={13} color={T.violet} />
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
+                  <UserRound
+                    size={13}
+                    color={T.violet}
+                  />
+
                   <div>
                     <p
                       style={{
@@ -351,13 +337,16 @@ export default function Navbar() {
                         fontWeight: 700,
                       }}
                     >
-                      {session.user?.name ?? session.user?.githubUsername}
+                      {session.user?.name ??
+                        session.user?.githubUsername}
                     </p>
+
                     <p
                       style={{
                         margin: "2px 0 0",
                         color: T.faint,
-                        fontFamily: "var(--font-mono)",
+                        fontFamily:
+                          "var(--font-mono)",
                         fontSize: 8.5,
                       }}
                     >
@@ -405,7 +394,8 @@ export default function Navbar() {
             fontSize: 11,
             fontWeight: 800,
             cursor: "pointer",
-            boxShadow: "0 10px 28px rgba(155,140,255,0.18)",
+            boxShadow:
+              "0 10px 28px rgba(155,140,255,0.18)",
           }}
         >
           Sign in
@@ -414,16 +404,26 @@ export default function Navbar() {
 
       <style>{`
         @media (max-width: 1100px) {
-          nav { padding: 0 18px !important; gap: 12px !important; }
-          nav > form { max-width: 360px !important; }
+          nav {
+            padding: 0 18px !important;
+            gap: 12px !important;
+          }
         }
+
         @media (max-width: 850px) {
-          nav > div:nth-of-type(2) { display: none !important; }
+          nav > div:nth-of-type(2) {
+            display: none !important;
+          }
         }
+
         @media (max-width: 650px) {
-          nav { height: 64px !important; }
-          nav > a { width: 125px !important; }
-          nav > form { display: none !important; }
+          nav {
+            height: 64px !important;
+          }
+
+          nav > a {
+            width: 125px !important;
+          }
         }
       `}</style>
     </nav>
