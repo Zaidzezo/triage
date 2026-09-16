@@ -488,6 +488,7 @@ export default function HomeContent() {
   const [sortOpen, setSortOpen] = useState(false);
 
   const sortRef = useRef<HTMLDivElement>(null);
+  const lastFetchedQuery = useRef<string | null>(null);
 
   // ── Close sort dropdown on outside click ──────────────────────────
   useEffect(() => {
@@ -523,69 +524,66 @@ export default function HomeContent() {
       .catch(() => {});
   }, []);
 
-  // ── Re-run search when URL ?repo= param changes ───────────────────
-  // This also handles Navbar searches while already on "/"
-  useEffect(() => {
-    const search = searchParams.get("repo");
-    if (search) {
-      setSearchInput(search);
-      fetchIssues(search);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]);
-
-  // ── Search ────────────────────────────────────────────────────────
-  async function fetchIssues(queryOverride?: string) {
-    const query = (queryOverride ?? searchInput).trim();
-    if (!query) return;
-
-    setIsLoading(true);
-    setError(null);
-    setRepo(null);
-    setIssues([]);
-    setFilters(DEFAULT_FILTERS);
-    setSort("newest");
-    setSortOpen(false);
-    // Clear stale scores from a previous search
-    setScores({});
-    setScoringIds(new Set());
-
-    try {
-      const response = await fetch("/api/issues", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ repo: query }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        setError(data.error ?? "Failed to search GitHub issues.");
-        return;
-      }
-
-      const returnedIssues: Issue[] = Array.isArray(data.issues) ? data.issues : [];
-      const returnedRepo =
-        data.mode === "repository" && data.repos?.[0] ? data.repos[0] : null;
-
-      setRepo(returnedRepo);
-
-      // Preserve any scores already embedded in the API response
-      const initialScores: Record<string, AiScore> = {};
-      returnedIssues.forEach((issue: Issue) => {
-        if (issue.aiScore) initialScores[issue.id] = issue.aiScore;
-      });
-      setScores(initialScores);
-      setIssues(returnedIssues);
-      setHasSearched(true);
-
-      router.replace(`/?repo=${encodeURIComponent(query)}`, { scroll: false });
-    } catch {
-      setError("Something went wrong while searching GitHub.");
-    } finally {
-      setIsLoading(false);
-    }
+useEffect(() => {
+  const search = searchParams.get("repo");
+  if (search && search !== lastFetchedQuery.current) {
+    lastFetchedQuery.current = search;
+    setSearchInput(search);
+    fetchIssues(search);
   }
+}, [searchParams]);
+
+// ── Search ────────────────────────────────────────────────────────
+async function fetchIssues(queryOverride?: string) {
+  const query = (queryOverride ?? searchInput).trim();
+  if (!query) return;
+
+  lastFetchedQuery.current = query; // prevent the useEffect from re-triggering
+  setIsLoading(true);
+  setError(null);
+  setRepo(null);
+  setIssues([]);
+  setFilters(DEFAULT_FILTERS);
+  setSort("newest");
+  setSortOpen(false);
+  setScores({});
+  setScoringIds(new Set());
+
+  try {
+    const response = await fetch("/api/issues", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repo: query }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      setError(data.error ?? "Failed to search GitHub issues.");
+      return;
+    }
+
+    const returnedIssues: Issue[] = Array.isArray(data.issues) ? data.issues : [];
+    const returnedRepo =
+      data.mode === "repository" && data.repos?.[0] ? data.repos[0] : null;
+
+    setRepo(returnedRepo);
+
+    const initialScores: Record<string, AiScore> = {};
+    returnedIssues.forEach((issue: Issue) => {
+      if (issue.aiScore) initialScores[issue.id] = issue.aiScore;
+    });
+    setScores(initialScores);
+    setIssues(returnedIssues);
+    setHasSearched(true);
+
+    router.replace(`/?repo=${encodeURIComponent(query)}`, { scroll: false });
+  } catch {
+    setError("Something went wrong while searching GitHub.");
+  } finally {
+    setIsLoading(false);
+  }
+}
 
   // ── AI score ──────────────────────────────────────────────────────
   async function handleScore(issueId: string) {
