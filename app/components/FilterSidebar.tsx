@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import {
-  Activity,
   ChevronDown,
   Clock3,
   Code2,
@@ -40,8 +39,7 @@ export interface Filters {
 
   assigned:
     | "any"
-    | "unassigned"
-    | "assigned";
+    | "unassigned";
 
   linkedPr:
     | "any"
@@ -50,12 +48,11 @@ export interface Filters {
 
   authorType: string[];
 
-  stars:
-    | "any"
-    | "100"
-    | "1000"
-    | "10000"
-    | "50000";
+  // "any" = no minimum.
+  // A number = minimum stargazer count
+  // (presets: 5000 / 10000 / 50000, or a
+  // custom value from the slider, 1000-50000).
+  stars: "any" | number;
 
   language: string;
 
@@ -64,11 +61,6 @@ export interface Filters {
     | "day"
     | "week"
     | "month";
-
-  repoHealth:
-    | "any"
-    | "reviewed"
-    | "unreviewed";
 }
 
 export const DEFAULT_FILTERS: Filters = {
@@ -80,8 +72,20 @@ export const DEFAULT_FILTERS: Filters = {
   stars: "any",
   language: "any",
   date: "any",
-  repoHealth: "any",
 };
+
+const STAR_PRESETS: {
+  value: number;
+  label: string;
+}[] = [
+  { value: 5000, label: "5k+" },
+  { value: 10000, label: "10k+" },
+  { value: 50000, label: "50k+" },
+];
+
+const SLIDER_MIN = 1000;
+const SLIDER_MAX = 50000;
+const SLIDER_STEP = 1000;
 
 interface Props {
   filters: Filters;
@@ -90,6 +94,12 @@ interface Props {
   ) => void;
   onClear: () => void;
   availableLanguages: string[];
+
+  // In global search mode hasLinkedPr is
+  // always false (GitHub search does not
+  // fetch timelineItems), so the filter is
+  // meaningless there and gets hidden.
+  isGlobalSearch: boolean;
 }
 
 function Section({
@@ -348,6 +358,7 @@ export default function FilterSidebar({
   onChange,
   onClear,
   availableLanguages,
+  isGlobalSearch,
 }: Props) {
   const set = <
     K extends keyof Filters
@@ -360,6 +371,21 @@ export default function FilterSidebar({
       [key]: value,
     });
   };
+
+  const starsValue =
+    typeof filters.stars ===
+    "number"
+      ? filters.stars
+      : SLIDER_MIN;
+
+  const isPreset =
+    typeof filters.stars ===
+      "number" &&
+    STAR_PRESETS.some(
+      (preset) =>
+        preset.value ===
+        filters.stars
+    );
 
   const hasActive =
     filters.difficulty !==
@@ -377,8 +403,6 @@ export default function FilterSidebar({
     filters.language !==
       "any" ||
     filters.date !==
-      "any" ||
-    filters.repoHealth !==
       "any";
 
   return (
@@ -489,30 +513,168 @@ export default function FilterSidebar({
             <Star size={13} />
           }
         >
-          {[
-            ["any", "Any"],
-            ["100", "100+"],
-            ["1000", "1k+"],
-            ["10000", "10k+"],
-            ["50000", "50k+"],
-          ].map(
-            ([value, label]) => (
+          <Radio
+            label="Any"
+            checked={
+              filters.stars ===
+              "any"
+            }
+            onChange={() =>
+              set(
+                "stars",
+                "any"
+              )
+            }
+          />
+
+          {STAR_PRESETS.map(
+            (preset) => (
               <Radio
-                key={value}
-                label={label}
+                key={
+                  preset.value
+                }
+                label={
+                  preset.label
+                }
                 checked={
                   filters.stars ===
-                  value
+                  preset.value
                 }
                 onChange={() =>
                   set(
                     "stars",
-                    value as Filters["stars"]
+                    preset.value
                   )
                 }
               />
             )
           )}
+
+          {/* Custom minimum slider */}
+
+          <div
+            style={{
+              marginTop: 9,
+              padding:
+                "9px 10px 10px",
+              borderRadius: 9,
+              border:
+                `1px solid ${
+                  filters.stars !==
+                    "any" &&
+                  !isPreset
+                    ? "rgba(155,140,255,0.22)"
+                    : T.border
+                }`,
+              background:
+                "rgba(255,255,255,0.02)",
+            }}
+          >
+            <div
+              style={{
+                display:
+                  "flex",
+                alignItems:
+                  "center",
+                justifyContent:
+                  "space-between",
+                marginBottom:
+                  7,
+              }}
+            >
+              <span
+                style={{
+                  color:
+                    T.muted,
+                  fontSize:
+                    9.5,
+                  fontWeight:
+                    650,
+                }}
+              >
+                Custom minimum
+              </span>
+
+              <span
+                style={{
+                  color:
+                    filters.stars !==
+                      "any" &&
+                    !isPreset
+                      ? "#C7C2FF"
+                      : T.faint,
+                  fontFamily:
+                    "var(--font-mono)",
+                  fontSize:
+                    9,
+                }}
+              >
+                {filters.stars !==
+                  "any" &&
+                !isPreset
+                  ? `${starsValue / 1000}k+`
+                  : "—"}
+              </span>
+            </div>
+
+            <input
+              type="range"
+              min={
+                SLIDER_MIN
+              }
+              max={
+                SLIDER_MAX
+              }
+              step={
+                SLIDER_STEP
+              }
+              value={
+                starsValue
+              }
+              onChange={(
+                event
+              ) =>
+                set(
+                  "stars",
+                  Number(
+                    event
+                      .target
+                      .value
+                  )
+                )
+              }
+              style={{
+                width:
+                  "100%",
+                accentColor:
+                  T.violet,
+                cursor:
+                  "pointer",
+              }}
+            />
+
+            <div
+              style={{
+                display:
+                  "flex",
+                alignItems:
+                  "center",
+                justifyContent:
+                  "space-between",
+                marginTop:
+                  4,
+                color:
+                  T.faint,
+                fontFamily:
+                  "var(--font-mono)",
+                fontSize:
+                  8,
+              }}
+            >
+              <span>1k</span>
+              <span>50k</span>
+            </div>
+          </div>
         </Section>
 
         <Section
@@ -557,59 +719,6 @@ export default function FilterSidebar({
               />
             )
           )}
-        </Section>
-
-        <Section
-          title="Repository health"
-          icon={
-            <Activity
-              size={13}
-            />
-          }
-        >
-          <Radio
-            label="Any"
-            checked={
-              filters.repoHealth ===
-              "any"
-            }
-            onChange={() =>
-              set(
-                "repoHealth",
-                "any"
-              )
-            }
-          />
-
-          <Radio
-            label="Has reviewed PRs"
-            color={T.lime}
-            checked={
-              filters.repoHealth ===
-              "reviewed"
-            }
-            onChange={() =>
-              set(
-                "repoHealth",
-                "reviewed"
-              )
-            }
-          />
-
-          <Radio
-            label="No reviewed PRs"
-            color={T.red}
-            checked={
-              filters.repoHealth ===
-              "unreviewed"
-            }
-            onChange={() =>
-              set(
-                "repoHealth",
-                "unreviewed"
-              )
-            }
-          />
         </Section>
 
         {/* ISSUE FILTERS */}
@@ -762,73 +871,87 @@ export default function FilterSidebar({
             />
           }
         >
-          {[
-            ["any", "Any"],
-            [
-              "unassigned",
-              "Unassigned",
-            ],
-            [
-              "assigned",
-              "Assigned",
-            ],
-          ].map(
-            ([value, label]) => (
-              <Radio
-                key={value}
-                label={label}
-                checked={
-                  filters.assigned ===
-                  value
-                }
-                onChange={() =>
-                  set(
-                    "assigned",
-                    value as Filters["assigned"]
-                  )
-                }
-              />
-            )
-          )}
+          <Radio
+            label="Any"
+            checked={
+              filters.assigned ===
+              "any"
+            }
+            onChange={() =>
+              set(
+                "assigned",
+                "any"
+              )
+            }
+          />
+
+          <Radio
+            label="Unassigned"
+            checked={
+              filters.assigned ===
+              "unassigned"
+            }
+            onChange={() =>
+              set(
+                "assigned",
+                "unassigned"
+              )
+            }
+          />
         </Section>
 
-        <Section
-          title="Linked PR"
-          icon={
-            <GitPullRequest
-              size={13}
-            />
-          }
-        >
-          {[
-            ["any", "Any"],
-            [
-              "has-pr",
-              "Has linked PR",
-            ],
-            [
-              "no-pr",
-              "No linked PR",
-            ],
-          ].map(
-            ([value, label]) => (
-              <Radio
-                key={value}
-                label={label}
-                checked={
-                  filters.linkedPr ===
-                  value
-                }
-                onChange={() =>
-                  set(
-                    "linkedPr",
-                    value as Filters["linkedPr"]
-                  )
-                }
+        {!isGlobalSearch && (
+          <Section
+            title="Linked PR"
+            icon={
+              <GitPullRequest
+                size={13}
               />
-            )
-          )}
-        </Section>
+            }
+          >
+            <Radio
+              label="Any"
+              checked={
+                filters.linkedPr ===
+                "any"
+              }
+              onChange={() =>
+                set(
+                  "linkedPr",
+                  "any"
+                )
+              }
+            />
+
+            <Radio
+              label="Has linked PR"
+              checked={
+                filters.linkedPr ===
+                "has-pr"
+              }
+              onChange={() =>
+                set(
+                  "linkedPr",
+                  "has-pr"
+                )
+              }
+            />
+
+            <Radio
+              label="No linked PR"
+              checked={
+                filters.linkedPr ===
+                "no-pr"
+              }
+              onChange={() =>
+                set(
+                  "linkedPr",
+                  "no-pr"
+                )
+              }
+            />
+          </Section>
+        )}
 
         <Section
           title="Author type"

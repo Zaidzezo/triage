@@ -10,7 +10,6 @@ import {
   Search,
   SlidersHorizontal,
   Sparkles,
-  Terminal,
 } from "lucide-react";
 import {
   Inter,
@@ -95,7 +94,6 @@ function filterIssues(issues: Issue[], filters: Filters): Issue[] {
     }
 
     if (filters.assigned === "unassigned" && issue.isAssigned) return false;
-    if (filters.assigned === "assigned" && !issue.isAssigned) return false;
     if (filters.linkedPr === "has-pr" && !issue.hasLinkedPr) return false;
     if (filters.linkedPr === "no-pr" && issue.hasLinkedPr) return false;
 
@@ -108,18 +106,12 @@ function filterIssues(issues: Issue[], filters: Filters): Issue[] {
 
     if (filters.stars !== "any") {
       const stars = issue.repo?.stars ?? 0;
-      if (stars < Number(filters.stars)) return false;
+      if (stars < filters.stars) return false;
     }
 
     if (filters.language !== "any") {
       const language = issue.repo?.language ?? null;
       if (language !== filters.language) return false;
-    }
-
-    if (filters.repoHealth !== "any") {
-      const healthy = issue.repo?.health?.reviewedInLast10 ?? false;
-      if (filters.repoHealth === "reviewed" && !healthy) return false;
-      if (filters.repoHealth === "unreviewed" && healthy) return false;
     }
 
     if (filters.date !== "any") {
@@ -490,7 +482,19 @@ export default function HomeContent() {
   const [currentPage, setCurrentPage] = useState(1);
 
   const sortRef = useRef<HTMLDivElement>(null);
+
+  // Duplicate-request guard only — NOT the
+  // stale-response solution. The AbortController
+  // + requestId pair below handles that.
   const lastFetchedQuery = useRef<string | null>(null);
+
+  // Cancel the previous in-flight request
+  // whenever a new search starts.
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Monotonic ID of the latest request. Only the
+  // request holding the current ID may touch state.
+  const requestIdRef = useRef(0);
 
   // ── Close sort dropdown on outside click ──────────────────────────
   useEffect(() => {
@@ -526,67 +530,106 @@ export default function HomeContent() {
       .catch(() => {});
   }, []);
 
-useEffect(() => {
-  const search = searchParams.get("repo");
-  if (search && search !== lastFetchedQuery.current) {
-    lastFetchedQuery.current = search;
-    setSearchInput(search);
-    fetchIssues(search);
-  }
-}, [searchParams]);
-
-// ── Search ────────────────────────────────────────────────────────
-async function fetchIssues(queryOverride?: string) {
-  const query = (queryOverride ?? searchInput).trim();
-  if (!query) return;
-
-  lastFetchedQuery.current = query; // prevent the useEffect from re-triggering
-  setIsLoading(true);
-  setError(null);
-  setRepo(null);
-  setIssues([]);
-  setFilters(DEFAULT_FILTERS);
-  setSort("newest");
-  setSortOpen(false);
-  setScores({});
-  setScoringIds(new Set());
-  setCurrentPage(1);
-
-  try {
-    const response = await fetch("/api/issues", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ repo: query }),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      setError(data.error ?? "Failed to search GitHub issues.");
-      return;
+  // ── React to URL changes (back/forward nav,
+  //    direct links, router.replace) ──────────────────────────────────
+  useEffect(() => {
+    const search = searchParams.get("repo");
+    if (search && search !== lastFetchedQuery.current) {
+      lastFetchedQuery.current = search;
+      setSearchInput(search);
+      fetchIssues(search);
     }
+  }, [searchParams]);
 
-    const returnedIssues: Issue[] = Array.isArray(data.issues) ? data.issues : [];
-    const returnedRepo =
-      data.mode === "repository" && data.repos?.[0] ? data.repos[0] : null;
+  // Abort any in-flight request on unmount
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+    };
+  }, []);
 
-    setRepo(returnedRepo);
+  // ── Search ────────────────────────────────────────────────────────
+  async function fetchIssues(queryOverride?: string) {
+    const query = (queryOverride ?? searchInput).trim();
+    if (!query) return;
 
-    const initialScores: Record<string, AiScore> = {};
-    returnedIssues.forEach((issue: Issue) => {
-      if (issue.aiScore) initialScores[issue.id] = issue.aiScore;
-    });
-    setScores(initialScores);
-    setIssues(returnedIssues);
-    setHasSearched(true);
+    // Prevent the searchParams effect from
+    // re-triggering the same query.
+    lastFetchedQuery.current = query;
 
-    router.replace(`/?repo=${encodeURIComponent(query)}`, { scroll: false });
-  } catch {
-    setError("Something went wrong while searching GitHub.");
-  } finally {
-    setIsLoading(false);
+    // Cancel the previous in-flight request.
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    // Claim the latest-request slot. Any response
+    // from an older request ID is discarded.
+    const requestId = ++requestIdRef.current;
+
+    setIsLoading(true);
+    setError(null);
+    setRepo(null);
+    setIssues([]);
+    setFilters(DEFAULT_FILTERS);
+    setSort("newest");
+    setSortOpen(false);
+    setScores({});
+    setScoringIds(new Set());
+    setCurrentPage(1);
+
+    try {
+      const response = await fetch("/api/issues", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ repo: query }),
+        signal: controller.signal,
+      });
+
+      const data = await response.json();
+
+      // A newer request superseded this one.
+      if (requestId !== requestIdRef.current) return;
+
+      if (!response.ok) {
+        setError(data.error ?? "Failed to search GitHub issues.");
+        return;
+      }
+
+      const returnedIssues: Issue[] = Array.isArray(data.issues) ? data.issues : [];
+      const returnedRepo =
+        data.mode === "repository" && data.repos?.[0] ? data.repos[0] : null;
+
+      setRepo(returnedRepo);
+
+      const initialScores: Record<string, AiScore> = {};
+      returnedIssues.forEach((issue: Issue) => {
+        if (issue.aiScore) initialScores[issue.id] = issue.aiScore;
+      });
+      setScores(initialScores);
+      setIssues(returnedIssues);
+      setHasSearched(true);
+
+      router.replace(`/?repo=${encodeURIComponent(query)}`, { scroll: false });
+    } catch (err) {
+      // Silently ignore aborts
+      if (
+        err instanceof DOMException &&
+        err.name === "AbortError"
+      ) {
+        return;
+      }
+
+      // Stale errors must not clobber a newer request
+      if (requestId !== requestIdRef.current) return;
+
+      setError("Something went wrong while searching GitHub.");
+    } finally {
+      // Only the current request may flip loading off
+      if (requestId === requestIdRef.current) {
+        setIsLoading(false);
+      }
+    }
   }
-}
 
   // ── AI score ──────────────────────────────────────────────────────
   async function handleScore(issueId: string) {
@@ -933,7 +976,7 @@ async function fetchIssues(queryOverride?: string) {
                     cursor: "pointer",
                   }}
                 >
-                  {item.query}
+                  {item.label}
                 </button>
               ))}
             </div>
@@ -992,6 +1035,7 @@ async function fetchIssues(queryOverride?: string) {
                 setCurrentPage(1);
               }}
               availableLanguages={availableLanguages}
+              isGlobalSearch={isGlobalSearch}
             />
 
             <div style={{ minWidth: 0 }}>

@@ -39,18 +39,11 @@ export interface AiScore {
   explanation: string;
 }
 
-export interface RepositoryHealth {
-  reviewedInLast10: boolean;
-  pullRequestsChecked: number;
-  reviewedPullRequests: number;
-}
-
 export interface RepoInfo {
   fullName: string;
   stars: number;
   language: string | null;
   description: string | null;
-  health: RepositoryHealth;
 }
 
 export interface Issue {
@@ -222,15 +215,6 @@ export default function IssueCard({
       ]
     : null;
 
-  const health = repo.health ?? {
-  reviewedInLast10: false,
-  pullRequestsChecked: 0,
-  reviewedPullRequests: 0,
-};
-
-const repoHealthy =
-  health.reviewedInLast10;
-
   function handleAiClick() {
     if (!hasScore) {
       onScore();
@@ -380,74 +364,6 @@ const repoHealthy =
                     open contribution
                   </Tag>
                 )}
-
-                {/* Repository health */}
-
-                <span
-  title={
-    health.pullRequestsChecked === 0
-      ? "Repository review history has not been checked yet."
-      : repoHealthy
-      ? `At least ${health.reviewedPullRequests} of the latest ${health.pullRequestsChecked} pull requests had a review.`
-      : `None of the latest ${health.pullRequestsChecked} pull requests had a review.`
-  }
-  style={{
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 5,
-    padding: "3px 7px",
-    borderRadius: 999,
-    background:
-      health.pullRequestsChecked === 0
-        ? "rgba(255,255,255,0.035)"
-        : repoHealthy
-        ? "rgba(184,243,107,0.07)"
-        : "rgba(255,142,158,0.06)",
-    border:
-      `1px solid ${
-        health.pullRequestsChecked === 0
-          ? "rgba(255,255,255,0.10)"
-          : repoHealthy
-          ? "rgba(184,243,107,0.18)"
-          : "rgba(255,142,158,0.15)"
-      }`,
-    color:
-      health.pullRequestsChecked === 0
-        ? T.faint
-        : repoHealthy
-        ? T.lime
-        : T.red,
-    fontSize: 8.5,
-    fontWeight: 750,
-    whiteSpace: "nowrap",
-  }}
->
-  <span
-    style={{
-      width: 5,
-      height: 5,
-      borderRadius: "50%",
-      background:
-        health.pullRequestsChecked === 0
-          ? T.faint
-          : repoHealthy
-          ? T.lime
-          : T.red,
-      boxShadow:
-        health.pullRequestsChecked === 0
-          ? "none"
-          : repoHealthy
-          ? `0 0 8px ${T.lime}`
-          : `0 0 8px ${T.red}`,
-    }}
-  />
-
-  {health.pullRequestsChecked === 0
-    ? "not checked"
-    : repoHealthy
-    ? "reviewed"
-    : "unreviewed"}
-</span>
               </div>
 
               <div
@@ -517,8 +433,7 @@ const repoHealthy =
                 width: 31,
                 height: 31,
                 display: "grid",
-                placeItems:
-                  "center",
+                placeItems: "center",
                 border:
                   `1px solid ${
                     isSaved
@@ -558,8 +473,7 @@ const repoHealthy =
                 width: 31,
                 height: 31,
                 display: "grid",
-                placeItems:
-                  "center",
+                placeItems: "center",
                 border:
                   `1px solid ${T.border}`,
                 borderRadius: 8,
