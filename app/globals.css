@@ -47,3 +47,26 @@ body {
   animation: shimmer 1.5s ease-in-out infinite;
   border-radius: 6px;
 }
+
+.scroll-dark {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(155, 140, 255, 0.35) transparent;
+}
+
+.scroll-dark::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.scroll-dark::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scroll-dark::-webkit-scrollbar-thumb {
+  background: rgba(155, 140, 255, 0.28);
+  border-radius: 999px;
+}
+
+.scroll-dark::-webkit-scrollbar-thumb:hover {
+  background: rgba(155, 140, 255, 0.55);
+}

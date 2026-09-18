@@ -83,6 +83,7 @@ model SavedIssue {
   issueId String    @map("issue_id")
   issue   Issue     @relation(fields: [issueId], references: [id])
   savedAt DateTime? @map("saved_at")
+  status  String    @default("SAVED") @map("status")
 
   @@unique([userId, issueId])
   @@map("saved_issues")

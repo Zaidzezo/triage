@@ -64,6 +64,10 @@ const SORT_LABELS: Record<SortKey, string> = {
   "least-comments": "Least comments",
 };
 
+// CHANGED (Edit A): canonical key for saved-state lookups — stable regardless
+// of how /api/issues identifies issues (DB uuid or GitHub issue id).
+const savedKey = (issue: Issue): string => issue.githubIssueId ?? issue.id;
+
 // Single source of truth for suggested searches
 const SUGGESTED = [
   { label: "Next.js", query: "next", accent: T.violet },
@@ -516,16 +520,19 @@ export default function HomeContent() {
     return () => document.removeEventListener("keydown", handler);
   }, []);
 
-  // ── Load saved issue IDs ───────────────────────────────────────────
+  // CHANGED (Edit B): ── Load saved issue IDs ─────────────────────────
+  // The old version crashed silently on the 405 (route had no GET handler)
+  // and only stored one id form. Now it tolerates failures and stores BOTH
+  // id forms so pre-highlighting matches however /api/issues ids issues.
   useEffect(() => {
     fetch("/api/saved")
-      .then((r) => r.json())
+      .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
-        if (Array.isArray(data.saved)) {
-          setSavedIds(
-            new Set(data.saved.map((s: any) => s.issue.id as string))
-          );
-        }
+        if (!data || !Array.isArray(data.saved)) return;
+        const ids: string[] = data.saved.flatMap((s: any) =>
+          [s.issue.id, s.issue.githubIssueId].filter(Boolean)
+        );
+        setSavedIds(new Set(ids));
       })
       .catch(() => {});
   }, []);
@@ -671,14 +678,18 @@ export default function HomeContent() {
     });
   }
 
-  // ── Save / unsave ─────────────────────────────────────────────────
-  async function handleToggleSave(issueId: string) {
-    const wasSaved = savedIds.has(issueId);
+  // CHANGED (Edit C): ── Save / unsave ───────────────────────────────
+  // Now takes the whole issue and sends the full payload so /api/saved
+  // can persist the issue if the search endpoint didn't. Also fails
+  // loudly on non-ok responses instead of treating them as "unsaved".
+  async function handleToggleSave(issue: Issue) {
+    const key = savedKey(issue);
+    const wasSaved = savedIds.has(key);
 
     // Optimistic update
     setSavedIds((prev) => {
       const next = new Set(prev);
-      wasSaved ? next.delete(issueId) : next.add(issueId);
+      wasSaved ? next.delete(key) : next.add(key);
       return next;
     });
 
@@ -686,22 +697,27 @@ export default function HomeContent() {
       const response = await fetch("/api/saved", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ issueId }),
+        // Full payload so the API can persist the issue if the
+        // search endpoint didn't
+        body: JSON.stringify({ issueId: issue.id, issue, repo: issue.repo }),
       });
 
+      if (!response.ok) throw new Error(`/api/saved responded ${response.status}`);
+
       const data = await response.json();
+      if (typeof data.saved !== "boolean") throw new Error("Unexpected response");
 
       // Reconcile with server truth
       setSavedIds((prev) => {
         const next = new Set(prev);
-        data.saved ? next.add(issueId) : next.delete(issueId);
+        data.saved ? next.add(key) : next.delete(key);
         return next;
       });
     } catch {
-      // Roll back on network error
+      // Roll back on any failure
       setSavedIds((prev) => {
         const next = new Set(prev);
-        wasSaved ? next.add(issueId) : next.delete(issueId);
+        wasSaved ? next.add(key) : next.delete(key);
         return next;
       });
     }
@@ -1451,12 +1467,14 @@ export default function HomeContent() {
                               ease: EASE,
                             }}
                           >
+                            {/* CHANGED (Edit D): isSaved/onSave now use the
+                                canonical savedKey and pass the full issue */}
                             <IssueCard
                               issue={issue}
                               repo={issue.repo}
-                              isSaved={savedIds.has(issue.id)}
+                              isSaved={savedIds.has(savedKey(issue))}
                               isScoring={scoringIds.has(issue.id)}
-                              onSave={() => handleToggleSave(issue.id)}
+                              onSave={() => handleToggleSave(issue)}
                               onScore={() => handleScore(issue.id)}
                             />
                           </motion.div>
@@ -1487,45 +1505,53 @@ export default function HomeContent() {
                               border: `1px solid ${T.border}`,
                               background: "transparent",
                               color: currentPage === 1 ? T.faint : T.muted,
-                              cursor: currentPage === 1 ? "not-allowed" : "pointer",
-                              fontSize: 12,
-                              fontWeight: 600,
+                              cursor:
+                                currentPage === 1 ? "not-allowed" : "pointer",
+                              fontSize: 11,
+                              fontWeight: 650,
                             }}
                           >
-                            ← Prev
+                            Prev
                           </button>
 
-                          {pageNumbers.map((item, i) =>
-                            item === "…" ? (
+                          {pageNumbers.map((page, idx) =>
+                            page === "…" ? (
                               <span
-                                key={`ellipsis-${i}`}
-                                style={{ color: T.faint, fontSize: 12, padding: "0 4px" }}
+                                key={`ellipsis-${idx}`}
+                                style={{
+                                  color: T.faint,
+                                  fontSize: 11,
+                                  padding: "0 4px",
+                                }}
                               >
                                 …
                               </span>
                             ) : (
                               <button
-                                key={item}
+                                key={page}
                                 type="button"
-                                onClick={() => goToPage(item)}
+                                onClick={() => goToPage(page)}
                                 style={{
-                                  width: 36,
+                                  minWidth: 36,
                                   height: 36,
                                   borderRadius: 8,
                                   border: `1px solid ${
-                                    currentPage === item
-                                      ? "rgba(155,140,255,0.45)"
+                                    page === currentPage
+                                      ? "rgba(155,140,255,0.30)"
                                       : T.border
                                   }`,
                                   background:
-                                    currentPage === item ? T.violetDim : "transparent",
-                                  color: currentPage === item ? "#D2CDFF" : T.muted,
+                                    page === currentPage
+                                      ? T.violetDim
+                                      : "transparent",
+                                  color:
+                                    page === currentPage ? "#D2CDFF" : T.muted,
                                   cursor: "pointer",
-                                  fontSize: 12,
-                                  fontWeight: currentPage === item ? 700 : 500,
+                                  fontSize: 11,
+                                  fontWeight: page === currentPage ? 750 : 500,
                                 }}
                               >
-                                {item}
+                                {page}
                               </button>
                             )
                           )}
@@ -1540,14 +1566,17 @@ export default function HomeContent() {
                               borderRadius: 8,
                               border: `1px solid ${T.border}`,
                               background: "transparent",
-                              color: currentPage === totalPages ? T.faint : T.muted,
+                              color:
+                                currentPage === totalPages ? T.faint : T.muted,
                               cursor:
-                                currentPage === totalPages ? "not-allowed" : "pointer",
-                              fontSize: 12,
-                              fontWeight: 600,
+                                currentPage === totalPages
+                                  ? "not-allowed"
+                                  : "pointer",
+                              fontSize: 11,
+                              fontWeight: 650,
                             }}
                           >
-                            Next →
+                            Next
                           </button>
                         </div>
                       )}
@@ -1559,31 +1588,6 @@ export default function HomeContent() {
           </div>
         </section>
       </div>
-
-      <style>{`
-        * { box-sizing: border-box; }
-        body { margin: 0; background: ${T.bg}; }
-        input::placeholder { color: ${T.faint}; }
-        button { font-family: inherit; }
-        ::selection { background: rgba(155,140,255,0.28); color: ${T.text}; }
-
-        @media (max-width: 900px) {
-          section { padding-left: 22px !important; padding-right: 22px !important; }
-          section > div > div { grid-template-columns: 1fr !important; }
-          .filter-sidebar { position: static !important; width: 100% !important; }
-        }
-        @media (max-width: 700px) {
-          section { padding-left: 16px !important; padding-right: 16px !important; }
-          form { flex-direction: column !important; }
-          form button { width: 100%; }
-        }
-        @media (max-width: 560px) {
-          section { padding-left: 14px !important; padding-right: 14px !important; }
-        }
-        @media (prefers-reduced-motion: reduce) {
-          html { scroll-behavior: auto; }
-        }
-      `}</style>
     </main>
   );
 }

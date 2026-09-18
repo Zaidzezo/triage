@@ -33,7 +33,118 @@ function authErrorResponse(err: unknown) {
   return NextResponse.json({ error: "Internal server error" }, { status: 500 })
 }
 
+// ─── GET /api/saved — Which issues has this user saved? ──────────────────────
+// Used by Discover (HomeContent) to pre-highlight the bookmark icons.
+
+export async function GET() {
+  let userId: string
+  try {
+    userId = await getAuthenticatedUserId()
+  } catch (err) {
+    return authErrorResponse(err)
+  }
+
+  try {
+    const saved = await prisma.savedIssue.findMany({
+      where: { userId },
+      select: {
+        issue: {
+          select: {
+            id: true,
+            githubIssueId: true,
+          },
+        },
+      },
+    })
+
+    return NextResponse.json({ saved })
+  } catch {
+    return NextResponse.json({ error: "Database error" }, { status: 500 })
+  }
+}
+
 // ─── POST /api/saved — Toggle save / unsave ──────────────────────────────────
+
+interface IncomingRepo {
+  fullName: string
+  stars?: number
+  language?: string | null
+  description?: string | null
+}
+
+interface IncomingIssue {
+  githubIssueId?: string
+  number?: number
+  title?: string
+  url?: string
+  bodyPreview?: string | null
+  state?: string
+  authorAssociation?: string
+  commentsCount?: number
+  isAssigned?: boolean
+  hasLinkedPr?: boolean
+  createdAt?: string
+}
+
+/**
+ * Search results from /api/issues may not be persisted as DB rows. If the
+ * issueId doesn't resolve, upsert the Issue (and its Repo) from the payload
+ * the client sends, then toggle the save against the real row.
+ */
+async function upsertIssueFromPayload(
+  fallbackGithubIssueId: string,
+  issue: IncomingIssue,
+  repo: IncomingRepo | undefined
+): Promise<{ id: string } | null> {
+  if (!repo?.fullName || !issue.url || !issue.title) return null
+
+  const githubIssueId = issue.githubIssueId ?? fallbackGithubIssueId
+
+  // If /api/issues ever provides real GitHub repo ids, pass them through in
+  // the payload and use them here instead of this synthetic key.
+  const githubRepoId = `fullname:${repo.fullName}`
+  const ownerLogin = repo.fullName.split("/")[0] ?? "unknown"
+
+  const dbRepo = await prisma.repo.upsert({
+    where: { githubRepoId },
+    update: {
+      stars: repo.stars ?? 0,
+      language: repo.language ?? null,
+      description: repo.description ?? null,
+      lastSyncedAt: new Date(),
+    },
+    create: {
+      githubRepoId,
+      fullName: repo.fullName,
+      ownerLogin,
+      stars: repo.stars ?? 0,
+      language: repo.language ?? null,
+      description: repo.description ?? null,
+    },
+  })
+
+  const dbIssue = await prisma.issue.upsert({
+    where: { githubIssueId },
+    update: { lastSyncedAt: new Date() },
+    create: {
+      githubIssueId,
+      repoId: dbRepo.id,
+      number: issue.number ?? 0,
+      title: issue.title,
+      url: issue.url,
+      bodyPreview: issue.bodyPreview ?? null,
+      state: issue.state ?? "OPEN",
+      authorAssociation: issue.authorAssociation ?? "NONE",
+      commentsCount: issue.commentsCount ?? 0,
+      isAssigned: issue.isAssigned ?? false,
+      hasLinkedPr: issue.hasLinkedPr ?? false,
+      createdAt: issue.createdAt ? new Date(issue.createdAt) : new Date(),
+    },
+    select: { id: true },
+  })
+
+  return dbIssue
+}
 
 export async function POST(req: NextRequest) {
   // 1. Authenticate
@@ -57,36 +168,48 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "issueId is required" }, { status: 400 })
   }
 
-  // 3. Verify issue exists
-  const issue = await prisma.issue.findUnique({
-    where: { id: issueId },
-    select: { id: true },
-  })
+  // 3. Resolve the issue — DB id first, otherwise upsert from payload
+  let issueRow: { id: string } | null = null
+  try {
+    issueRow = await prisma.issue.findUnique({
+      where: { id: issueId },
+      select: { id: true },
+    })
 
-  if (!issue) {
-    return NextResponse.json({ error: "Issue not found" }, { status: 404 })
+    if (!issueRow && body.issue) {
+      issueRow = await upsertIssueFromPayload(issueId, body.issue, body.repo)
+    }
+  } catch {
+    return NextResponse.json({ error: "Database error" }, { status: 500 })
   }
+
+  if (!issueRow) {
+    return NextResponse.json(
+      { error: "Issue not found (no payload to create it from)" },
+      { status: 404 }
+    )
+  }
+
+  const dbIssueId = issueRow.id
 
   // 4. Toggle inside a transaction — prevents race conditions
   let result: { saved: boolean }
   try {
     result = await prisma.$transaction(async (tx) => {
       const existing = await tx.savedIssue.findFirst({
-        where: { userId, issueId },
+        where: { userId, issueId: dbIssueId },
         select: { id: true },
       })
 
       if (existing) {
-        await tx.savedIssue.delete({
-          where: { id: existing.id },
-        })
+        await tx.savedIssue.delete({ where: { id: existing.id } })
         return { saved: false }
       }
 
       await tx.savedIssue.create({
         data: {
           userId,
-          issueId,
+          issueId: dbIssueId,
           savedAt: new Date(),
         },
       })
@@ -94,164 +217,8 @@ export async function POST(req: NextRequest) {
       return { saved: true }
     })
   } catch {
-    return NextResponse.json(
-      { error: "Database error" },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: "Database error" }, { status: 500 })
   }
 
   return NextResponse.json(result)
-}
-
-// ─── GET /api/saved — List saved issues with full card data ──────────────────
-
-export async function GET(
-  req: NextRequest
-) {
-  // 1. Authenticate
-
-  let userId: string;
-
-  try {
-    userId =
-      await getAuthenticatedUserId();
-  } catch (err) {
-    return authErrorResponse(err);
-  }
-
-  // 2. Search query
-
-  const { searchParams } =
-    new URL(req.url);
-
-  const q =
-    searchParams.get("q")?.trim() ?? "";
-
-  // 3. Fetch saved issues
-
-  let savedIssues: any[];
-
-  try {
-    savedIssues =
-      await prisma.savedIssue.findMany({
-        where: {
-          userId,
-
-          ...(q && {
-            issue: {
-              OR: [
-                {
-                  title: {
-                    contains: q,
-                    mode: "insensitive",
-                  },
-                },
-                {
-                  bodyPreview: {
-                    contains: q,
-                    mode: "insensitive",
-                  },
-                },
-                {
-                  repo: {
-                    fullName: {
-                      contains: q,
-                      mode: "insensitive",
-                    },
-                  },
-                },
-              ],
-            },
-          }),
-        },
-
-        orderBy: {
-          savedAt: "desc",
-        },
-
-        select: {
-          savedAt: true,
-
-          issue: {
-            select: {
-              id: true,
-              number: true,
-              title: true,
-              url: true,
-              bodyPreview: true,
-              state: true,
-              authorAssociation: true,
-              commentsCount: true,
-              isAssigned: true,
-              hasLinkedPr: true,
-              createdAt: true,
-
-              aiScore: {
-                select: {
-                  difficulty: true,
-                  explanation: true,
-                },
-              },
-
-              repo: {
-                select: {
-                  id: true,
-                  fullName: true,
-                  language: true,
-                  stars: true,
-                  ownerLogin: true,
-                },
-              },
-            },
-          },
-        },
-      });
-  } catch {
-    return NextResponse.json(
-      {
-        error: "Database error",
-      },
-      { status: 500 }
-    );
-  }
-
-  /*
-   * At this point we intentionally don't make
-   * GitHub health requests here.
-   *
-   * Saved issues should load quickly.
-   * Health will therefore be "not checked"
-   * unless the repository was part of a
-   * recent discovery search.
-   */
-
-  const saved =
-    savedIssues.map(
-      (item) => ({
-        savedAt: item.savedAt,
-
-        issue: {
-          ...item.issue,
-
-          repo: {
-            ...item.issue.repo,
-
-            health: {
-              reviewedInLast10:
-                false,
-
-              pullRequestsChecked:
-                0,
-
-              reviewedPullRequests:
-                0,
-            },
-          },
-        },
-      })
-    );
-
-  return NextResponse.json({
-    saved,
-  });
 }
