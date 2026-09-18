@@ -863,43 +863,6 @@ export default function FilterSidebar({
           )}
         </Section>
 
-        <Section
-          title="Assignment"
-          icon={
-            <UserRound
-              size={13}
-            />
-          }
-        >
-          <Radio
-            label="Any"
-            checked={
-              filters.assigned ===
-              "any"
-            }
-            onChange={() =>
-              set(
-                "assigned",
-                "any"
-              )
-            }
-          />
-
-          <Radio
-            label="Unassigned"
-            checked={
-              filters.assigned ===
-              "unassigned"
-            }
-            onChange={() =>
-              set(
-                "assigned",
-                "unassigned"
-              )
-            }
-          />
-        </Section>
-
         {!isGlobalSearch && (
           <Section
             title="Linked PR"
