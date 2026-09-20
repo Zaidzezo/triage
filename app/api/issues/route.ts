@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { getAccessToken } from "@/app/lib/getAccessToken";
 import {
-  fetchRepoIssues,
+  fetchRepoMetadata,
   searchIssues,
+  type RepoMetadata,
   type SearchIssueResult,
 } from "@/app/lib/github";
 import { prisma } from "@/app/lib/prisma";
@@ -12,13 +13,9 @@ import { prisma } from "@/app/lib/prisma";
 // SEARCH LIMITS
 // ─────────────────────────────────────
 
-const MAX_RESULTS = 200;
-
-// GitHub search is paginated with cursors.
-// This allows us to inspect up to 1000 raw
-// search results in one request if necessary
-// to find 200 qualifying issues.
-const MAX_GITHUB_PAGES = 10;
+const MAX_RESULTS = 200;        // global mode cap
+const MAX_REPO_ISSUES = 100;    // exact-repo mode cap
+const MAX_GITHUB_PAGES = 8;     // global mode safety limit
 
 // ─────────────────────────────────────
 // HELPERS
@@ -41,6 +38,126 @@ function isExactRepository(input: string) {
 
 function makeRepoKey(fullName: string) {
   return fullName.toLowerCase();
+}
+
+function makeBodyPreview(body: string | null) {
+  return body ? body.slice(0, 700) : null;
+}
+
+function toApiIssue(issue: SearchIssueResult, repoMeta: {
+  fullName: string;
+  stars: number;
+  language: string | null;
+  description: string | null;
+}) {
+  return {
+    id: issue.id,
+    githubIssueId: issue.id,
+    number: issue.number,
+    title: issue.title,
+    url: issue.url,
+    bodyPreview: makeBodyPreview(issue.body),
+    state: issue.state,
+    authorAssociation: issue.authorAssociation,
+    commentsCount: issue.commentsCount,
+    isAssigned: issue.isAssigned,
+    hasLinkedPr: issue.hasLinkedPr,
+    createdAt: issue.createdAt,
+    aiScore: null,
+    repo: repoMeta,
+  };
+}
+
+function isAuthError(message: string) {
+  return (
+    message.includes("401") ||
+    message.includes("403") ||
+    message.toLowerCase().includes("unauthorized") ||
+    message.toLowerCase().includes("bad credentials")
+  );
+}
+
+// ─────────────────────────────────────
+// BACKGROUND DATABASE CACHE
+// ─────────────────────────────────────
+
+async function cacheIssues(
+  issues: SearchIssueResult[],
+  repoMetaByFullName: Map<string, RepoMetadata>,
+  syncTimestamp: Date
+) {
+  try {
+    const CHUNK = 10;
+
+    for (let i = 0; i < issues.length; i += CHUNK) {
+      await Promise.all(
+        issues.slice(i, i + CHUNK).map(async (issue) => {
+          try {
+            const [owner] = issue.repository.nameWithOwner.split("/");
+            const meta = repoMetaByFullName.get(
+              issue.repository.nameWithOwner
+            );
+
+            const dbRepo = await prisma.repo.upsert({
+              where: { githubRepoId: issue.repository.id },
+              update: {
+                fullName: issue.repository.nameWithOwner,
+                description: issue.repository.description,
+                stars: issue.repository.stars,
+                language: issue.repository.language,
+                ownerLogin: owner,
+                lastSyncedAt: syncTimestamp,
+              },
+              create: {
+                githubRepoId: issue.repository.id,
+                fullName: issue.repository.nameWithOwner,
+                description: issue.repository.description,
+                stars: issue.repository.stars,
+                language: issue.repository.language,
+                ownerLogin: owner,
+                lastSyncedAt: syncTimestamp,
+              },
+            });
+
+            await prisma.issue.upsert({
+              where: { githubIssueId: issue.id },
+              update: {
+                title: issue.title,
+                number: issue.number,
+                url: issue.url,
+                bodyPreview: makeBodyPreview(issue.body),
+                state: issue.state,
+                authorAssociation: issue.authorAssociation,
+                commentsCount: issue.commentsCount,
+                isAssigned: issue.isAssigned,
+                hasLinkedPr: issue.hasLinkedPr,
+                lastSyncedAt: syncTimestamp,
+              },
+              create: {
+                githubIssueId: issue.id,
+                repoId: dbRepo.id,
+                title: issue.title,
+                number: issue.number,
+                url: issue.url,
+                bodyPreview: makeBodyPreview(issue.body),
+                state: issue.state,
+                authorAssociation: issue.authorAssociation,
+                commentsCount: issue.commentsCount,
+                isAssigned: issue.isAssigned,
+                hasLinkedPr: issue.hasLinkedPr,
+                createdAt: new Date(issue.createdAt),
+                lastSyncedAt: syncTimestamp,
+              },
+            });
+          } catch (error) {
+            console.error("Failed caching issue:", error);
+          }
+        })
+      );
+    }
+  } catch (error) {
+    console.error("Failed caching issues:", error);
+  }
 }
 
 // ─────────────────────────────────────
@@ -92,23 +209,36 @@ export async function POST(req: NextRequest) {
 
   // ─────────────────────────────────────
   // EXACT REPOSITORY MODE
+  //
+  // GitHub enforces server-side:
+  //   open, unassigned, created in last 6
+  //   months, repo >= 1000 stars.
+  //
+  // We loop at most 2 pages (2 × 50 = 100)
+  // and stop as soon as we have enough —
+  // normally a single request, well under
+  // the 16-second budget.
   // ─────────────────────────────────────
 
   if (isExactRepository(input)) {
     const [owner, repoName] = input.split("/");
 
-    let repository: any;
+    let repo: RepoMetadata;
 
     try {
-      repository = await fetchRepoIssues(owner, repoName, accessToken);
+      repo = await fetchRepoMetadata(owner, repoName, accessToken);
     } catch (error: any) {
       const message = error?.message ?? "";
 
-      if (
-        message.includes("401") ||
-        message.toLowerCase().includes("unauthorized")
-      ) {
+      if (isAuthError(message)) {
         return NextResponse.json({ error: "TOKEN_REVOKED" }, { status: 401 });
+      }
+
+      if (message.includes("not found") || message.includes("404")) {
+        return NextResponse.json(
+          { error: "Repository not found" },
+          { status: 404 }
+        );
       }
 
       return NextResponse.json(
@@ -117,146 +247,94 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (!repository) {
-      return NextResponse.json(
-        { error: "Repository not found" },
-        { status: 404 }
-      );
-    }
-
     // Only repositories with 1000+ stars are allowed.
-    if (repository.stargazerCount < 1000) {
+    if (repo.stars < 1000) {
       return NextResponse.json({
         mode: "repository",
-        search: { input: rawInput, resolved: repository.nameWithOwner },
+        search: { input: rawInput, resolved: repo.nameWithOwner },
         repos: [],
         issues: [],
         pagination: { hasNextPage: false, endCursor: null },
       });
     }
 
-    const syncTimestamp = new Date();
+    const results: SearchIssueResult[] = [];
+    const seenIssueIds = new Set<string>();
+    let cursor: string | undefined;
+    let hasNextPage = true;
+      const sixMonthsAgo = new Date();
+      sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
 
-    // Only unassigned issues.
-    const repositoryIssues = (repository.issues?.nodes ?? []).filter(
-      (issue: any) => (issue.assignees?.nodes?.length ?? 0) === 0
-    );
+    try {
+      for (
+        let page = 0;
+        page < 2 && hasNextPage && results.length < MAX_REPO_ISSUES;
+        page++
+      ) {
+        const githubResult = await searchIssues(
+          `repo:${owner}/${repoName}`,
+          accessToken,
+          cursor
+        );
+
+        let dups = 0, lowStars = 0, tooOld = 0, kept = 0;
+
+        for (const issue of githubResult.issues) {
+  if (seenIssueIds.has(issue.id)) { dups++; continue; }
+  if ((issue.repository.stars ?? 0) < 1000) { lowStars++; continue; }
+  // if (new Date(issue.createdAt) < sixMonthsAgo) { tooOld++; continue; }
+  seenIssueIds.add(issue.id);
+  results.push(issue);
+  kept++;
+  if (results.length >= MAX_RESULTS) break;
+}
+
+console.log(
+  `page ${page}: got=${githubResult.issues.length} kept=${kept} dups=${dups} lowStars=${lowStars} tooOld=${tooOld} total=${results.length}`
+);
+
+        hasNextPage = githubResult.hasNextPage;
+        cursor = githubResult.endCursor ?? undefined;
+      }
+    } catch (error: any) {
+      const message = error?.message ?? "";
+
+      if (isAuthError(message)) {
+        return NextResponse.json({ error: "TOKEN_REVOKED" }, { status: 401 });
+      }
+
+      return NextResponse.json(
+        { error: message || "GitHub issue search failed" },
+        { status: 500 }
+      );
+    }
+
+    const repoMeta = {
+      fullName: repo.nameWithOwner,
+      stars: repo.stars,
+      language: repo.language,
+      description: repo.description,
+    };
+
+    const syncTimestamp = new Date();
 
     // ─────────────────────────────────────
     // Background database cache
     // ─────────────────────────────────────
 
-    void (async () => {
-      try {
-        const dbRepo = await prisma.repo.upsert({
-          where: { githubRepoId: repository.id },
-          update: {
-            fullName: repository.nameWithOwner,
-            description: repository.description,
-            stars: repository.stargazerCount,
-            language: repository.primaryLanguage?.name ?? null,
-            ownerLogin: owner,
-            lastSyncedAt: syncTimestamp,
-          },
-          create: {
-            githubRepoId: repository.id,
-            fullName: repository.nameWithOwner,
-            description: repository.description,
-            stars: repository.stargazerCount,
-            language: repository.primaryLanguage?.name ?? null,
-            ownerLogin: owner,
-            lastSyncedAt: syncTimestamp,
-          },
-        });
+    const repoMetaByFullName = new Map<string, RepoMetadata>();
+    repoMetaByFullName.set(repo.nameWithOwner, repo);
 
-        await prisma.$transaction(
-          repositoryIssues.map((issue: any) => {
-            const commentsCount = issue.comments?.totalCount ?? 0;
-            const isAssigned = (issue.assignees?.nodes?.length ?? 0) > 0;
-            const hasLinkedPr =
-              issue.timelineItems?.nodes?.some(
-                (node: any) => node?.willCloseTarget && node?.source?.id
-              ) ?? false;
-            const bodyPreview = issue.body ? issue.body.slice(0, 700) : null;
-
-            return prisma.issue.upsert({
-              where: { githubIssueId: issue.id },
-              update: {
-                title: issue.title,
-                number: issue.number,
-                url: issue.url,
-                bodyPreview,
-                state: issue.state,
-                authorAssociation: issue.authorAssociation,
-                commentsCount,
-                isAssigned,
-                hasLinkedPr,
-                lastSyncedAt: syncTimestamp,
-              },
-              create: {
-                githubIssueId: issue.id,
-                repoId: dbRepo.id,
-                title: issue.title,
-                number: issue.number,
-                url: issue.url,
-                bodyPreview,
-                state: issue.state,
-                authorAssociation: issue.authorAssociation,
-                commentsCount,
-                isAssigned,
-                hasLinkedPr,
-                createdAt: new Date(issue.createdAt),
-                lastSyncedAt: syncTimestamp,
-              },
-            });
-          }),
-          { timeout: 60_000 }
-        );
-      } catch (error) {
-        console.error("Failed caching repo issues:", error);
-      }
-    })();
-
-    const repoMeta = {
-      fullName: repository.nameWithOwner,
-      stars: repository.stargazerCount,
-      language: repository.primaryLanguage?.name ?? null,
-      description: repository.description,
-    };
+    void cacheIssues(results, repoMetaByFullName, syncTimestamp);
 
     return NextResponse.json({
       mode: "repository",
-      search: { input: rawInput, resolved: repository.nameWithOwner },
+      search: { input: rawInput, resolved: repo.nameWithOwner },
       repos: [repoMeta],
-      issues: repositoryIssues.slice(0, MAX_RESULTS).map((issue: any) => {
-        const commentsCount = issue.comments?.totalCount ?? 0;
-        const isAssigned = (issue.assignees?.nodes?.length ?? 0) > 0;
-        const hasLinkedPr =
-          issue.timelineItems?.nodes?.some(
-            (node: any) => node?.willCloseTarget && node?.source?.id
-          ) ?? false;
-        const bodyPreview = issue.body ? issue.body.slice(0, 700) : null;
-
-        return {
-          id: issue.id,
-          githubIssueId: issue.id,
-          number: issue.number,
-          title: issue.title,
-          url: issue.url,
-          bodyPreview,
-          state: issue.state,
-          authorAssociation: issue.authorAssociation,
-          commentsCount,
-          isAssigned,
-          hasLinkedPr,
-          createdAt: issue.createdAt,
-          aiScore: null,
-          repo: repoMeta,
-        };
-      }),
+      issues: results.map((issue) => toApiIssue(issue, repoMeta)),
       pagination: {
-        hasNextPage: repositoryIssues.length > MAX_RESULTS,
-        endCursor: null,
+        hasNextPage: hasNextPage && results.length >= MAX_REPO_ISSUES,
+        endCursor: cursor ?? null,
       },
     });
   }
@@ -264,7 +342,7 @@ export async function POST(req: NextRequest) {
   // ─────────────────────────────────────
   // GLOBAL SEARCH MODE
   //
-  // We fetch GitHub pages of 100 raw
+  // We fetch GitHub pages of 50 raw
   // search results and continue until:
   //
   //   1. We collect 200 qualifying issues
@@ -273,15 +351,20 @@ export async function POST(req: NextRequest) {
   //   OR
   //   3. We reach the safety limit
   //
-  // Qualifying issue:
+  // Qualifying issue (all enforced by
+  // GitHub server-side):
   //
   //   - open
   //   - unassigned
+  //   - created in the last 6 months
   //   - repository >= 1000 stars
   //
   // The frontend then displays these 200
   // locally at 30 issues per page.
   // ─────────────────────────────────────
+
+  const sixMonthsAgo = new Date();
+  sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
 
   let results: SearchIssueResult[] = [];
   let githubHasNextPage = true;
@@ -293,9 +376,12 @@ export async function POST(req: NextRequest) {
       if (!githubHasNextPage || results.length >= MAX_RESULTS) break;
 
       const githubResult = await searchIssues(input, accessToken, githubCursor);
-
       for (const issue of githubResult.issues) {
         if (seenIssueIds.has(issue.id)) continue;
+        // Defensive re-checks — GitHub already applies these
+        // server-side, but they cost nothing client-side.
+        if ((issue.repository.stars ?? 0) < 1000) continue;
+        // if (new Date(issue.createdAt) < sixMonthsAgo) continue;
         seenIssueIds.add(issue.id);
         results.push(issue);
         if (results.length >= MAX_RESULTS) break;
@@ -307,8 +393,14 @@ export async function POST(req: NextRequest) {
       if (!githubCursor) break;
     }
   } catch (error: any) {
+    const message = error?.message ?? "";
+
+    if (isAuthError(message)) {
+      return NextResponse.json({ error: "TOKEN_REVOKED" }, { status: 401 });
+    }
+
     return NextResponse.json(
-      { error: error?.message ?? "GitHub issue search failed" },
+      { error: message || "GitHub issue search failed" },
       { status: 500 }
     );
   }
@@ -354,108 +446,33 @@ export async function POST(req: NextRequest) {
   // Background database cache
   // ─────────────────────────────────────
 
-  void (async () => {
-    const CHUNK = 10;
-
-    for (let i = 0; i < results.length; i += CHUNK) {
-      await Promise.all(
-        results.slice(i, i + CHUNK).map(async (issue) => {
-          try {
-            const [owner] = issue.repository.nameWithOwner.split("/");
-
-            const dbRepo = await prisma.repo.upsert({
-              where: { githubRepoId: issue.repository.id },
-              update: {
-                fullName: issue.repository.nameWithOwner,
-                description: issue.repository.description,
-                stars: issue.repository.stars,
-                language: issue.repository.language,
-                ownerLogin: owner,
-                lastSyncedAt: syncTimestamp,
-              },
-              create: {
-                githubRepoId: issue.repository.id,
-                fullName: issue.repository.nameWithOwner,
-                description: issue.repository.description,
-                stars: issue.repository.stars,
-                language: issue.repository.language,
-                ownerLogin: owner,
-                lastSyncedAt: syncTimestamp,
-              },
-            });
-
-            const bodyPreview = issue.body
-              ? issue.body.slice(0, 700)
-              : null;
-
-            await prisma.issue.upsert({
-              where: { githubIssueId: issue.id },
-              update: {
-                title: issue.title,
-                number: issue.number,
-                url: issue.url,
-                bodyPreview,
-                state: issue.state,
-                authorAssociation: issue.authorAssociation,
-                commentsCount: issue.commentsCount,
-                isAssigned: issue.isAssigned,
-                hasLinkedPr: issue.hasLinkedPr,
-                lastSyncedAt: syncTimestamp,
-              },
-              create: {
-                githubIssueId: issue.id,
-                repoId: dbRepo.id,
-                title: issue.title,
-                number: issue.number,
-                url: issue.url,
-                bodyPreview,
-                state: issue.state,
-                authorAssociation: issue.authorAssociation,
-                commentsCount: issue.commentsCount,
-                isAssigned: issue.isAssigned,
-                hasLinkedPr: issue.hasLinkedPr,
-                createdAt: new Date(issue.createdAt),
-                lastSyncedAt: syncTimestamp,
-              },
-            });
-          } catch (error) {
-            console.error("Failed caching issue:", error);
-          }
-        })
-      );
+  const repoMetaByFullName = new Map<string, RepoMetadata>();
+  for (const issue of results) {
+    if (!repoMetaByFullName.has(issue.repository.nameWithOwner)) {
+      repoMetaByFullName.set(issue.repository.nameWithOwner, {
+        id: issue.repository.id,
+        nameWithOwner: issue.repository.nameWithOwner,
+        description: issue.repository.description,
+        stars: issue.repository.stars,
+        language: issue.repository.language,
+      });
     }
-  })();
+  }
+
+  void cacheIssues(results, repoMetaByFullName, syncTimestamp);
 
   // ─────────────────────────────────────
   // Final issues
   // ─────────────────────────────────────
 
-  const finalIssues = results.map((issue) => {
-    const bodyPreview = issue.body ? issue.body.slice(0, 700) : null;
-
-    return {
-      id: issue.id,
-      githubIssueId: issue.id,
-      number: issue.number,
-      title: issue.title,
-      url: issue.url,
-      bodyPreview,
-      state: issue.state,
-      authorAssociation: issue.authorAssociation,
-      commentsCount: issue.commentsCount,
-      isAssigned: issue.isAssigned,
-      hasLinkedPr: issue.hasLinkedPr,
-      createdAt: issue.createdAt,
-      aiScore: null,
-
-      repo: {
-        fullName: issue.repository.nameWithOwner,
-        stars: issue.repository.stars,
-        language: issue.repository.language,
-        description: issue.repository.description,
-      },
-    };
-  });
+  const finalIssues = results.map((issue) =>
+    toApiIssue(issue, {
+      fullName: issue.repository.nameWithOwner,
+      stars: issue.repository.stars,
+      language: issue.repository.language,
+      description: issue.repository.description,
+    })
+  );
 
   // ─────────────────────────────────────
   // Repository summaries

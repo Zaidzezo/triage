@@ -17,6 +17,14 @@ export interface SearchRepository {
   };
 }
 
+export interface RepoMetadata {
+  id: string;
+  nameWithOwner: string;
+  description: string | null;
+  stars: number;
+  language: string | null;
+}
+
 export interface SearchIssueResult {
   id: string;
   number: number;
@@ -47,6 +55,18 @@ export interface SearchIssuesPage {
 }
 
 // ─────────────────────────────────────────────
+// SHARED HEADERS
+// ─────────────────────────────────────────────
+
+function restHeaders(accessToken: string) {
+  return {
+    Authorization: `Bearer ${accessToken}`,
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+  };
+}
+
+// ─────────────────────────────────────────────
 // SEARCH REPOSITORIES
 // ─────────────────────────────────────────────
 
@@ -66,11 +86,7 @@ export async function searchRepositories(
     });
 
   const response = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-    },
+    headers: restHeaders(accessToken),
   });
 
   if (!response.ok) {
@@ -85,99 +101,29 @@ export async function searchRepositories(
 }
 
 // ─────────────────────────────────────────────
-// EXACT REPOSITORY ISSUE FETCH
+// EXACT REPOSITORY METADATA (REST)
+//
+// Lightweight lookup used to:
+//   - distinguish 404 from empty results
+//   - enforce the 1000-star minimum
+//   - get repo description/language even when
+//     the repo has zero matching issues
 // ─────────────────────────────────────────────
 
-export async function fetchRepoIssues(
+export async function fetchRepoMetadata(
   owner: string,
   repo: string,
   accessToken: string
-) {
-  const query = `
-    query GetRepoIssues(
-      $owner: String!
-      $repo: String!
-    ) {
-      repository(
-        owner: $owner
-        name: $repo
-      ) {
-        id
-        nameWithOwner
-        description
-        stargazerCount
+): Promise<RepoMetadata> {
+  const url = `${GITHUB_REST_URL}/repos/${owner}/${repo}`;
 
-        primaryLanguage {
-          name
-        }
-
-        issues(
-          first: 100
-          states: [OPEN]
-          orderBy: {
-            field: CREATED_AT
-            direction: DESC
-          }
-        ) {
-          pageInfo {
-            hasNextPage
-            endCursor
-          }
-
-          nodes {
-            id
-            number
-            title
-            body
-            state
-            url
-            createdAt
-            authorAssociation
-
-            comments {
-              totalCount
-            }
-
-            assignees(first: 1) {
-              nodes {
-                login
-              }
-            }
-
-            timelineItems(
-              first: 10
-              itemTypes: [CROSS_REFERENCED_EVENT]
-            ) {
-              nodes {
-                ... on CrossReferencedEvent {
-                  willCloseTarget
-
-                  source {
-                    ... on PullRequest {
-                      id
-                      state
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  `;
-
-  const response = await fetch(GITHUB_GRAPHQL_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      query,
-      variables: { owner, repo },
-    }),
+  const response = await fetch(url, {
+    headers: restHeaders(accessToken),
   });
+
+  if (response.status === 404) {
+    throw new Error("Repository not found");
+  }
 
   if (!response.ok) {
     throw new Error(`GitHub API error: ${response.status}`);
@@ -185,35 +131,28 @@ export async function fetchRepoIssues(
 
   const data = await response.json();
 
-  if (data.errors?.length) {
-    throw new Error(data.errors[0]?.message ?? "GitHub GraphQL error");
-  }
-
-  const repository = data.data?.repository;
-
-  if (!repository) {
-    throw new Error("Repository not found");
-  }
-
-  return repository;
+  return {
+    id: String(data.id),
+    nameWithOwner: data.full_name,
+    description: data.description ?? null,
+    stars: data.stargazers_count ?? 0,
+    language: data.language ?? null,
+  };
 }
 
 // ─────────────────────────────────────────────
-// GLOBAL ISSUE SEARCH
+// GLOBAL / PER-REPO ISSUE SEARCH
 //
-// One call = up to 100 raw GitHub results.
-//
-// GitHub performs:
+// GitHub performs server-side:
 //   - text search
-//   - issue search
-//   - open-state filtering
-//   - no-assignee filtering
+//   - is:issue filter
+//   - open-state filter
+//   - no-assignee filter
+//   - created:>date filter (last 6 months)
+//   - stars:>1000 filter
 //
-// We perform:
-//   - repository >= 1000 stars (minimum enforced server-side)
-//
-// This function returns ONLY qualifying issues,
-// while preserving GitHub's cursor pagination.
+// One call = up to 50 raw results, cursor
+// paginated. Callers loop to reach their cap.
 // ─────────────────────────────────────────────
 
 export async function searchIssues(
@@ -229,7 +168,7 @@ export async function searchIssues(
       search(
         query: $query
         type: ISSUE
-        first: 100
+        first: 50
         after: $cursor
       ) {
         pageInfo {
@@ -252,12 +191,6 @@ export async function searchIssues(
               totalCount
             }
 
-            assignees(first: 1) {
-              nodes {
-                login
-              }
-            }
-
             repository {
               id
               nameWithOwner
@@ -267,10 +200,6 @@ export async function searchIssues(
               primaryLanguage {
                 name
               }
-
-              owner {
-                login
-              }
             }
           }
         }
@@ -278,12 +207,13 @@ export async function searchIssues(
     }
   `;
 
-  // GitHub handles the issue-side filters.
-  // Star filtering is NOT placed here because repository stars are
-  // repository metadata, which we already receive below.
+  const sixMonthsAgo = new Date();
+  sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+  const dateStr = sixMonthsAgo.toISOString().split("T")[0];
+
   const githubSearchQuery =
-    `(${queryText.trim()}) ` +
-    `is:issue state:open no:assignee`;
+  `${queryText.trim()} ` +
+  `is:issue state:open no:assignee stars:>1000 created:>${dateStr} sort:created-desc`;
 
   const response = await fetch(GITHUB_GRAPHQL_URL, {
     method: "POST",
@@ -293,10 +223,7 @@ export async function searchIssues(
     },
     body: JSON.stringify({
       query,
-      variables: {
-        query: githubSearchQuery,
-        cursor: cursor ?? null,
-      },
+      variables: { query: githubSearchQuery, cursor: cursor ?? null },
     }),
   });
 
@@ -313,44 +240,29 @@ export async function searchIssues(
   const searchData = data.data?.search;
   const nodes = searchData?.nodes ?? [];
 
-  // ─────────────────────────────────────
-  // Filter repositories to 1000+ stars
-  // ─────────────────────────────────────
-
   const issues = nodes
-    .filter((issue: any) => {
-      if (!issue?.repository) return false;
-
-      const stars = issue.repository.stargazerCount ?? 0;
-      return stars >= 1000;
-    })
-    .map((issue: any): SearchIssueResult => {
-      const commentsCount = issue.comments?.totalCount ?? 0;
-      const isAssigned = (issue.assignees?.nodes?.length ?? 0) > 0;
-
-      return {
-        id: issue.id,
-        number: issue.number,
-        title: issue.title,
-        body: issue.body ? issue.body.slice(0, 700) : null,
-        state: issue.state,
-        url: issue.url,
-        createdAt: issue.createdAt,
-        authorAssociation: issue.authorAssociation,
-        commentsCount,
-        isAssigned,
-        hasLinkedPr: false,
-
-        repository: {
-          id: issue.repository.id,
-          nameWithOwner: issue.repository.nameWithOwner,
-          description: issue.repository.description,
-          stars: issue.repository.stargazerCount,
-          language: issue.repository.primaryLanguage?.name ?? null,
-          ownerLogin: issue.repository.owner?.login ?? "",
-        },
-      };
-    });
+    .filter((issue: any) => issue?.repository)
+    .map((issue: any): SearchIssueResult => ({
+      id: issue.id,
+      number: issue.number,
+      title: issue.title,
+      body: issue.body ?? null,
+      state: issue.state,
+      url: issue.url,
+      createdAt: issue.createdAt,
+      authorAssociation: issue.authorAssociation,
+      commentsCount: issue.comments?.totalCount ?? 0,
+      isAssigned: false,
+      hasLinkedPr: false,
+      repository: {
+        id: issue.repository.id,
+        nameWithOwner: issue.repository.nameWithOwner,
+        description: issue.repository.description,
+        stars: issue.repository.stargazerCount,
+        language: issue.repository.primaryLanguage?.name ?? null,
+        ownerLogin: issue.repository.nameWithOwner.split("/")[0],
+      },
+    }));
 
   return {
     issues,
