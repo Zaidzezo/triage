@@ -69,6 +69,10 @@ function restHeaders(accessToken: string) {
 
 // ─────────────────────────────────────────────
 // SEARCH REPOSITORIES
+//
+// The stars: qualifier is reliable here (unlike
+// on issue search), so this is used to find
+// qualifying repos before searching issues.
 // ─────────────────────────────────────────────
 
 export async function searchRepositories(
@@ -146,25 +150,66 @@ export async function fetchRepoMetadata(
 }
 
 // ─────────────────────────────────────────────
+// REPO SCOPE CHUNKING
+//
+// GitHub caps search queries at 256 chars, so a
+// long list of repos has to be split across
+// several queries. Each chunk fits the budget.
+// ─────────────────────────────────────────────
+
+export const SCOPE_CHAR_BUDGET = 170;
+
+export function chunkRepoScope(
+  names: string[],
+  maxChars: number = SCOPE_CHAR_BUDGET
+): string[][] {
+  const chunks: string[][] = [];
+  let current: string[] = [];
+  let length = 0;
+
+  for (const name of names) {
+    const partLength = `repo:${name}`.length + 1;
+
+    if (current.length > 0 && length + partLength > maxChars) {
+      chunks.push(current);
+      current = [];
+      length = 0;
+    }
+
+    current.push(name);
+    length += partLength;
+  }
+
+  if (current.length > 0) chunks.push(current);
+
+  return chunks;
+}
+
+// ─────────────────────────────────────────────
 // GLOBAL / PER-REPO ISSUE SEARCH
 //
 // GitHub performs server-side:
-//   - text search
 //   - is:issue filter
 //   - open-state filter
 //   - no-assignee filter
 //   - created:>date filter (last 6 months)
-//   - stars:>1000 filter
 //
-// One call = up to 50 raw results, cursor
-// paginated. Callers loop to reach their cap.
+// NOTE: the stars: qualifier is NOT reliably
+// enforced on issue search, so when repoScope is
+// provided the query is limited to those repos
+// instead (which were already star-filtered via
+// repository search).
+//
+// One call = up to pageSize raw results (default
+// 100), cursor paginated.
 // ─────────────────────────────────────────────
 
 export interface SearchIssuesOptions {
   minStars?: number;
   unassignedOnly?: boolean;
   maxAgeMonths?: number;
-  repoScope?: string[];
+  repoScope?: string[]; // e.g. ["facebook/react", "vercel/next.js"]
+  pageSize?: number;    // issues per request, default 100
 }
 
 export async function searchIssues(
@@ -177,11 +222,12 @@ export async function searchIssues(
     query SearchIssues(
       $query: String!
       $cursor: String
+      $first: Int!
     ) {
       search(
         query: $query
         type: ISSUE
-        first: 100
+        first: $first
         after: $cursor
       ) {
         pageInfo {
@@ -229,16 +275,35 @@ export async function searchIssues(
   const minStars = opts?.minStars ?? 1000;
   const unassignedOnly = opts?.unassignedOnly ?? true;
   const maxAgeMonths = opts?.maxAgeMonths ?? 6;
+  const pageSize = Math.min(Math.max(opts?.pageSize ?? 100, 1), 100);
 
   const cutoffDate = new Date();
   cutoffDate.setMonth(cutoffDate.getMonth() - maxAgeMonths);
   const dateStr = cutoffDate.toISOString().split("T")[0];
 
-  const githubSearchQuery =
-    `${queryText.trim()} ` +
-  `is:issue is:open ` +
-  `${unassignedOnly ? "no:assignee " : ""}` +
-  `stars:>${minStars} created:>${dateStr} sort:created-desc`;
+  // Only as many repo: qualifiers as fit in the budget get included.
+  // The first one is always included so a scoped query never silently
+  // turns into an unscoped one.
+  const scopeParts: string[] = [];
+  let scopeLength = 0;
+
+  for (const name of opts?.repoScope ?? []) {
+    const part = `repo:${name}`;
+    if (scopeParts.length > 0 && scopeLength + part.length + 1 > SCOPE_CHAR_BUDGET) {
+      break;
+    }
+    scopeParts.push(part);
+    scopeLength += part.length + 1;
+  }
+
+  const isScoped = scopeParts.length > 0;
+
+  const githubSearchQuery = isScoped
+    ? `is:issue is:open ${unassignedOnly ? "no:assignee " : ""}` +
+      `${scopeParts.join(" ")} created:>${dateStr} sort:created-desc`
+    : `${queryText.trim()} ` +
+      `is:issue is:open ${unassignedOnly ? "no:assignee " : ""}` +
+      `stars:>${minStars} created:>${dateStr} sort:created-desc`;
 
   const response = await fetch(GITHUB_GRAPHQL_URL, {
     method: "POST",
@@ -248,7 +313,11 @@ export async function searchIssues(
     },
     body: JSON.stringify({
       query,
-      variables: { query: githubSearchQuery, cursor: cursor ?? null },
+      variables: {
+        query: githubSearchQuery,
+        cursor: cursor ?? null,
+        first: pageSize,
+      },
     }),
   });
 

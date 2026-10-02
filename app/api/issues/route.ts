@@ -2,11 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { getAccessToken } from "@/app/lib/getAccessToken";
 import {
+  chunkRepoScope,
   fetchRepoMetadata,
   searchIssues,
   searchRepositories,
   type RepoMetadata,
   type SearchIssueResult,
+  type SearchIssuesPage,
 } from "@/app/lib/github";
 import { prisma } from "@/app/lib/prisma";
 
@@ -14,9 +16,12 @@ import { prisma } from "@/app/lib/prisma";
 // SEARCH LIMITS
 // ─────────────────────────────────────
 
-const MAX_RESULTS = 80;        // global mode cap
-const MAX_REPO_ISSUES = 100;    // exact-repo mode cap
-const MAX_GITHUB_PAGES = 10;     // global mode safety limit
+const MAX_RESULTS = 120;         // global mode cap (was 80)
+const MAX_PER_REPO = 2;          // global mode: max issues from one repo
+const MAX_REPO_ISSUES = 100;     // exact-repo mode cap
+const REPO_POOL_SIZE = 100;      // qualifying repos to pull (was 60; GitHub's max per page is 100)
+const MAX_ISSUE_QUERIES = 16;    // parallel issue queries (was 10)
+const ISSUES_PER_QUERY = 50;     // issues requested per parallel query
 
 // ─────────────────────────────────────
 // HELPERS
@@ -213,12 +218,13 @@ export async function POST(req: NextRequest) {
   //
   // GitHub enforces server-side:
   //   open, unassigned, created in last 6
-  //   months, repo >= 1000 stars.
+  //   months. Repo >= 1000 stars is checked
+  //   up front via fetchRepoMetadata.
   //
-  // We loop at most 2 pages (2 × 50 = 100)
-  // and stop as soon as we have enough —
-  // normally a single request, well under
-  // the 16-second budget.
+  // We loop at most 2 pages and stop as
+  // soon as we have enough. The per-repo
+  // cap does not apply here, since every
+  // issue comes from the one repo asked for.
   // ─────────────────────────────────────
 
   if (isExactRepository(input)) {
@@ -263,8 +269,6 @@ export async function POST(req: NextRequest) {
     const seenIssueIds = new Set<string>();
     let cursor: string | undefined;
     let hasNextPage = true;
-      const sixMonthsAgo = new Date();
-      sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
 
     try {
       for (
@@ -278,21 +282,20 @@ export async function POST(req: NextRequest) {
           cursor
         );
 
-        let dups = 0, lowStars = 0, tooOld = 0, kept = 0;
+        let dups = 0, lowStars = 0, kept = 0;
 
         for (const issue of githubResult.issues) {
-  if (seenIssueIds.has(issue.id)) { dups++; continue; }
-  if ((issue.repository.stars ?? 0) < 1000) { lowStars++; continue; }
-  // if (new Date(issue.createdAt) < sixMonthsAgo) { tooOld++; continue; }
-  seenIssueIds.add(issue.id);
-  results.push(issue);
-  kept++;
-  if (results.length >= MAX_RESULTS) break;
-}
+          if (seenIssueIds.has(issue.id)) { dups++; continue; }
+          if ((issue.repository.stars ?? 0) < 1000) { lowStars++; continue; }
+          seenIssueIds.add(issue.id);
+          results.push(issue);
+          kept++;
+          if (results.length >= MAX_REPO_ISSUES) break;
+        }
 
-console.log(
-  `page ${page}: got=${githubResult.issues.length} kept=${kept} dups=${dups} lowStars=${lowStars} tooOld=${tooOld} total=${results.length}`
-);
+        console.log(
+          `page ${page}: got=${githubResult.issues.length} kept=${kept} dups=${dups} lowStars=${lowStars} total=${results.length}`
+        );
 
         hasNextPage = githubResult.hasNextPage;
         cursor = githubResult.endCursor ?? undefined;
@@ -343,81 +346,76 @@ console.log(
   // ─────────────────────────────────────
   // GLOBAL SEARCH MODE
   //
-  // We fetch GitHub pages of 50 raw
-  // search results and continue until:
-  //
-  //   1. We collect 200 qualifying issues
-  //   OR
-  //   2. GitHub has no more results
-  //   OR
-  //   3. We reach the safety limit
-  //
-  // Qualifying issue (all enforced by
-  // GitHub server-side):
-  //
-  //   - open
-  //   - unassigned
-  //   - created in the last 6 months
-  //   - repository >= 1000 stars
-  //
-  // The frontend then displays these 200
-  // locally at 30 issues per page.
+  // Phase 1: find a pool of qualifying repos
+  //          (1 fast REST call, stars filter
+  //          works on repo search).
+  // Phase 2: split the pool into small groups
+  //          that fit GitHub's query length
+  //          limit and search issues for all
+  //          groups in parallel.
+  // Phase 3: merge, newest first, and keep at
+  //          most MAX_PER_REPO issues per repo
+  //          so results spread across repos.
   // ─────────────────────────────────────
 
-  const sixMonthsAgo = new Date();
-  sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-
-  let results: SearchIssueResult[] = [];
-  let githubHasNextPage = true;
-  let githubCursor: string | undefined;
-  const seenIssueIds = new Set<string>();
+  // ─── Phase 1: qualifying repos ───
+  let repoNames: string[] = [];
 
   try {
-    for (let page = 0; page < MAX_GITHUB_PAGES; page++) {
-      if (!githubHasNextPage || results.length >= MAX_RESULTS) break;
-
-      const githubResult = await searchIssues(input, accessToken, githubCursor);
-
-      // ─── DEBUG: trace cursor + id drift across pages ───
-      console.log(
-        `page ${page}: cursor_in=${githubCursor ?? "null"} cursor_out=${githubResult.endCursor} ` +
-        `first_id=${githubResult.issues[0]?.id} last_id=${githubResult.issues.at(-1)?.id}`
-      );
-
-      let dups = 0, lowStars = 0, kept = 0;
-
-            for (const issue of githubResult.issues) {
-        if (seenIssueIds.has(issue.id)) { dups++; continue; }
-        // Defensive re-checks — GitHub already applies these
-        // server-side, but they cost nothing client-side.
-        if ((issue.repository.stars ?? 0) < 1000) {
-          lowStars++;
-          if (lowStars <= 5) {
-            console.log(
-              `  rejected: ${issue.repository.nameWithOwner} stars=${issue.repository.stars}`
-            );
-          }
-          continue;
-        }
-        // if (new Date(issue.createdAt) < sixMonthsAgo) continue;
-        seenIssueIds.add(issue.id);
-        results.push(issue);
-        kept++;
-        if (results.length >= MAX_RESULTS) break;
-      }
-
-      // ─── DEBUG: per-page filter breakdown ───
-      console.log(
-        `page ${page}: raw=${githubResult.issues.length} kept=${kept} dups=${dups} lowStars=${lowStars} runningTotal=${results.length}`
-      );
-
-      githubHasNextPage = githubResult.hasNextPage;
-      githubCursor = githubResult.endCursor ?? undefined;
-
-      if (!githubCursor) break;
-    }
+    const repos = await searchRepositories(input, accessToken, {
+      minStars: 1000,
+      perPage: REPO_POOL_SIZE,
+    });
+    repoNames = repos.map((r) => r.full_name);
   } catch (error: any) {
     const message = error?.message ?? "";
+
+    if (isAuthError(message)) {
+      return NextResponse.json({ error: "TOKEN_REVOKED" }, { status: 401 });
+    }
+
+    return NextResponse.json(
+      { error: message || "GitHub repository search failed" },
+      { status: 500 }
+    );
+  }
+
+  if (!repoNames.length) {
+    return NextResponse.json({
+      mode: "global",
+      search: { input: rawInput, resolved: null },
+      repos: [],
+      issues: [],
+      pagination: { hasNextPage: false, endCursor: null },
+    });
+  }
+
+  // ─── Phase 2: parallel issue queries ───
+  const scopeChunks = chunkRepoScope(repoNames).slice(0, MAX_ISSUE_QUERIES);
+
+  const settled = await Promise.allSettled(
+    scopeChunks.map((repoScope) =>
+      searchIssues(input, accessToken, undefined, {
+        repoScope,
+        pageSize: ISSUES_PER_QUERY,
+      })
+    )
+  );
+
+  const fetchedPages: SearchIssuesPage[] = [];
+  let firstError: any = null;
+
+  for (const outcome of settled) {
+    if (outcome.status === "fulfilled") {
+      fetchedPages.push(outcome.value);
+    } else if (!firstError) {
+      firstError = outcome.reason;
+    }
+  }
+
+  // Only fail the request if every query failed.
+  if (!fetchedPages.length && firstError) {
+    const message = firstError?.message ?? "";
 
     if (isAuthError(message)) {
       return NextResponse.json({ error: "TOKEN_REVOKED" }, { status: 401 });
@@ -429,8 +427,35 @@ console.log(
     );
   }
 
-  // Hard cap.
-  results = results.slice(0, MAX_RESULTS);
+  // ─── Phase 3: merge + per-repo cap ───
+  const allIssues = fetchedPages
+    .flatMap((page) => page.issues)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+  const results: SearchIssueResult[] = [];
+  const seenIssueIds = new Set<string>();
+  const perRepoCount = new Map<string, number>();
+
+  for (const issue of allIssues) {
+    if (seenIssueIds.has(issue.id)) continue;
+    // Safety net — scoped repos should already be 1000+ stars.
+    if ((issue.repository.stars ?? 0) < 1000) continue;
+
+    const repoKey = makeRepoKey(issue.repository.nameWithOwner);
+    const count = perRepoCount.get(repoKey) ?? 0;
+    if (count >= MAX_PER_REPO) continue;
+
+    perRepoCount.set(repoKey, count + 1);
+    seenIssueIds.add(issue.id);
+    results.push(issue);
+
+    if (results.length >= MAX_RESULTS) break;
+  }
+
+  console.log(
+    `[global] repoPool=${repoNames.length} queries=${scopeChunks.length} ` +
+    `fetched=${allIssues.length} kept=${results.length} distinctRepos=${perRepoCount.size}`
+  );
 
   // ─────────────────────────────────────
   // No results
@@ -526,9 +551,6 @@ console.log(
     search: { input: rawInput, resolved: null },
     repos: repoSummary,
     issues: finalIssues,
-    pagination: {
-      hasNextPage: githubHasNextPage,
-      endCursor: githubCursor ?? null,
-    },
+    pagination: { hasNextPage: false, endCursor: null },
   });
 }
