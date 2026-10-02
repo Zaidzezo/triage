@@ -78,12 +78,18 @@ function restHeaders(accessToken: string) {
 export async function searchRepositories(
   query: string,
   accessToken: string,
-  opts?: { minStars?: number; perPage?: number }
+  opts?: { minStars?: number; maxStars?: number; perPage?: number }
 ): Promise<SearchRepository[]> {
   const minStars = opts?.minStars ?? 1000;
   const perPage = opts?.perPage ?? 10;
 
-  const q = `${query} in:name,description,readme stars:>${minStars} archived:false fork:false`;
+  // minStars is inclusive, maxStars is exclusive (1000..49999 for a 50k cap)
+  const starRange =
+    opts?.maxStars != null
+      ? `stars:${minStars}..${opts.maxStars - 1}`
+      : `stars:>=${minStars}`;
+
+  const q = `${query} in:name,description,readme ${starRange} archived:false fork:false`;
 
   const url =
     `${GITHUB_REST_URL}/search/repositories?` +

@@ -16,12 +16,26 @@ import { prisma } from "@/app/lib/prisma";
 // SEARCH LIMITS
 // ─────────────────────────────────────
 
-const MAX_RESULTS = 120;         // global mode cap (was 80)
+const MAX_RESULTS = 150;         // global mode cap
 const MAX_PER_REPO = 2;          // global mode: max issues from one repo
 const MAX_REPO_ISSUES = 100;     // exact-repo mode cap
-const REPO_POOL_SIZE = 100;      // qualifying repos to pull (was 60; GitHub's max per page is 100)
-const MAX_ISSUE_QUERIES = 16;    // parallel issue queries (was 10)
+const REPOS_PER_BAND = 20;       // repos pulled from each star band
+const MAX_ISSUE_QUERIES = 20;    // parallel issue queries in global mode
 const ISSUES_PER_QUERY = 50;     // issues requested per parallel query
+const MIN_STARS = 1000;          // repos need at least this many stars
+const MAX_STARS = 50000;         // ...and fewer than this many
+
+// Global search samples repos from each of these star bands, so results
+// mix small, medium and huge repos. Min is inclusive, max is exclusive.
+const STAR_EDGES = [MIN_STARS, 3000, 7000, 15000, 30000, MAX_STARS];
+const STAR_BANDS = STAR_EDGES.slice(0, -1).map((min, i) => ({
+  min,
+  max: STAR_EDGES[i + 1],
+}));
+
+function bandIndex(stars: number) {
+  return STAR_BANDS.findIndex((b) => stars >= b.min && stars < b.max);
+}
 
 // ─────────────────────────────────────
 // HELPERS
@@ -218,8 +232,9 @@ export async function POST(req: NextRequest) {
   //
   // GitHub enforces server-side:
   //   open, unassigned, created in last 6
-  //   months. Repo >= 1000 stars is checked
-  //   up front via fetchRepoMetadata.
+  //   months. Repo star range (1000 to
+  //   49,999) is checked up front via
+  //   fetchRepoMetadata.
   //
   // We loop at most 2 pages and stop as
   // soon as we have enough. The per-repo
@@ -254,8 +269,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Only repositories with 1000+ stars are allowed.
-    if (repo.stars < 1000) {
+    // Only repositories with 1000 to 49,999 stars are allowed.
+    if (repo.stars < MIN_STARS || repo.stars >= MAX_STARS) {
       return NextResponse.json({
         mode: "repository",
         search: { input: rawInput, resolved: repo.nameWithOwner },
@@ -286,7 +301,8 @@ export async function POST(req: NextRequest) {
 
         for (const issue of githubResult.issues) {
           if (seenIssueIds.has(issue.id)) { dups++; continue; }
-          if ((issue.repository.stars ?? 0) < 1000) { lowStars++; continue; }
+          const issueStars = issue.repository.stars ?? 0;
+          if (issueStars < MIN_STARS || issueStars >= MAX_STARS) { lowStars++; continue; }
           seenIssueIds.add(issue.id);
           results.push(issue);
           kept++;
@@ -346,41 +362,62 @@ export async function POST(req: NextRequest) {
   // ─────────────────────────────────────
   // GLOBAL SEARCH MODE
   //
-  // Phase 1: find a pool of qualifying repos
-  //          (1 fast REST call, stars filter
-  //          works on repo search).
-  // Phase 2: split the pool into small groups
-  //          that fit GitHub's query length
-  //          limit and search issues for all
-  //          groups in parallel.
-  // Phase 3: merge, newest first, and keep at
-  //          most MAX_PER_REPO issues per repo
-  //          so results spread across repos.
+  // Phase 1: find repos in every star band
+  //          (one REST search per band, run
+  //          in parallel), so small, medium
+  //          and huge repos are all in the
+  //          pool.
+  // Phase 2: split each band's repos into
+  //          small groups that fit GitHub's
+  //          query length limit and search
+  //          issues for all groups in
+  //          parallel.
+  // Phase 3: cap issues per repo, then pick
+  //          round-robin across the bands so
+  //          no size dominates.
   // ─────────────────────────────────────
 
-  // ─── Phase 1: qualifying repos ───
-  let repoNames: string[] = [];
+  // ─── Phase 1: qualifying repos, one search per star band ───
+  // A single search sorted by stars only returns the biggest repos.
+  // Searching each band separately puts all sizes in the pool.
+  const bandSearches = await Promise.allSettled(
+    STAR_BANDS.map((band) =>
+      searchRepositories(input, accessToken, {
+        minStars: band.min,
+        maxStars: band.max,
+        perPage: REPOS_PER_BAND,
+      })
+    )
+  );
 
-  try {
-    const repos = await searchRepositories(input, accessToken, {
-      minStars: 1000,
-      perPage: REPO_POOL_SIZE,
-    });
-    repoNames = repos.map((r) => r.full_name);
-  } catch (error: any) {
-    const message = error?.message ?? "";
+  const reposByBand: string[][] = [];
+  let repoSearchError: any = null;
 
-    if (isAuthError(message)) {
-      return NextResponse.json({ error: "TOKEN_REVOKED" }, { status: 401 });
+  for (const outcome of bandSearches) {
+    if (outcome.status === "fulfilled") {
+      reposByBand.push(outcome.value.map((r) => r.full_name));
+    } else {
+      reposByBand.push([]);
+      if (!repoSearchError) repoSearchError = outcome.reason;
     }
-
-    return NextResponse.json(
-      { error: message || "GitHub repository search failed" },
-      { status: 500 }
-    );
   }
 
-  if (!repoNames.length) {
+  const totalRepos = reposByBand.reduce((sum, names) => sum + names.length, 0);
+
+  if (!totalRepos) {
+    if (repoSearchError) {
+      const message = repoSearchError?.message ?? "";
+
+      if (isAuthError(message)) {
+        return NextResponse.json({ error: "TOKEN_REVOKED" }, { status: 401 });
+      }
+
+      return NextResponse.json(
+        { error: message || "GitHub repository search failed" },
+        { status: 500 }
+      );
+    }
+
     return NextResponse.json({
       mode: "global",
       search: { input: rawInput, resolved: null },
@@ -391,7 +428,25 @@ export async function POST(req: NextRequest) {
   }
 
   // ─── Phase 2: parallel issue queries ───
-  const scopeChunks = chunkRepoScope(repoNames).slice(0, MAX_ISSUE_QUERIES);
+  // Repos are chunked per band, so a small repo is never crowded out by
+  // a busy huge repo in the same query (results come back newest-first).
+  // Chunks from all bands are interleaved, so if the cap cuts any off,
+  // it cuts evenly.
+  const chunksByBand = reposByBand.map((names) => chunkRepoScope(names));
+  const interleavedChunks: string[][] = [];
+
+  for (let i = 0; ; i++) {
+    let added = false;
+    for (const chunks of chunksByBand) {
+      if (i < chunks.length) {
+        interleavedChunks.push(chunks[i]);
+        added = true;
+      }
+    }
+    if (!added) break;
+  }
+
+  const scopeChunks = interleavedChunks.slice(0, MAX_ISSUE_QUERIES);
 
   const settled = await Promise.allSettled(
     scopeChunks.map((repoScope) =>
@@ -427,19 +482,21 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // ─── Phase 3: merge + per-repo cap ───
+  // ─── Phase 3: per-repo cap, then balance across star bands ───
   const allIssues = fetchedPages
     .flatMap((page) => page.issues)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
-  const results: SearchIssueResult[] = [];
+  const buckets: SearchIssueResult[][] = STAR_BANDS.map(() => []);
   const seenIssueIds = new Set<string>();
   const perRepoCount = new Map<string, number>();
 
   for (const issue of allIssues) {
     if (seenIssueIds.has(issue.id)) continue;
-    // Safety net — scoped repos should already be 1000+ stars.
-    if ((issue.repository.stars ?? 0) < 1000) continue;
+
+    // Doubles as the safety net: repos outside 1k-50k get index -1.
+    const band = bandIndex(issue.repository.stars ?? 0);
+    if (band === -1) continue;
 
     const repoKey = makeRepoKey(issue.repository.nameWithOwner);
     const count = perRepoCount.get(repoKey) ?? 0;
@@ -447,14 +504,30 @@ export async function POST(req: NextRequest) {
 
     perRepoCount.set(repoKey, count + 1);
     seenIssueIds.add(issue.id);
-    results.push(issue);
+    buckets[band].push(issue);
+  }
 
-    if (results.length >= MAX_RESULTS) break;
+  // Round-robin across bands: one from each band in turn, so no size
+  // dominates. A band with fewer issues just drops out of the rotation.
+  const results: SearchIssueResult[] = [];
+
+  for (let i = 0; results.length < MAX_RESULTS; i++) {
+    let added = false;
+    for (const bucket of buckets) {
+      if (i < bucket.length && results.length < MAX_RESULTS) {
+        results.push(bucket[i]);
+        added = true;
+      }
+    }
+    if (!added) break;
   }
 
   console.log(
-    `[global] repoPool=${repoNames.length} queries=${scopeChunks.length} ` +
-    `fetched=${allIssues.length} kept=${results.length} distinctRepos=${perRepoCount.size}`
+    `[global] repos/band=${reposByBand.map((n) => n.length).join("/")} ` +
+    `queries=${scopeChunks.length} fetched=${allIssues.length} ` +
+    `issues/band=${buckets.map((b) => b.length).join("/")} ` +
+    `final=${results.length} ` +
+    `distinctRepos=${new Set(results.map((i) => i.repository.nameWithOwner)).size}`
   );
 
   // ─────────────────────────────────────

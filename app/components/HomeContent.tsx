@@ -108,9 +108,10 @@ function filterIssues(issues: Issue[], filters: Filters): Issue[] {
       return false;
     }
 
-    if (filters.stars !== "any") {
+    if (filters.stars !== "any" || filters.starsMax !== "any") {
       const stars = issue.repo?.stars ?? 0;
-      if (stars < filters.stars) return false;
+      if (filters.stars !== "any" && stars < filters.stars) return false;
+      if (filters.starsMax !== "any" && stars > filters.starsMax) return false;
     }
 
     if (filters.language !== "any") {

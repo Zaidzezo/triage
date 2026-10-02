@@ -48,11 +48,12 @@ export interface Filters {
 
   authorType: string[];
 
-  // "any" = no minimum.
-  // A number = minimum stargazer count
-  // (presets: 5000 / 10000 / 50000, or a
-  // custom value from the slider, 1000-50000).
+  // Star range. The API already limits repos
+  // to 1000-49,999 stars, so:
+  //   stars    "any" = no minimum, number = minimum (inclusive)
+  //   starsMax "any" = no maximum, number = maximum (inclusive)
   stars: "any" | number;
+  starsMax: "any" | number;
 
   language: string;
 
@@ -70,22 +71,35 @@ export const DEFAULT_FILTERS: Filters = {
   linkedPr: "any",
   authorType: [],
   stars: "any",
+  starsMax: "any",
   language: "any",
   date: "any",
 };
 
+// Presets are "N+" minimums with no maximum.
 const STAR_PRESETS: {
   value: number;
   label: string;
 }[] = [
   { value: 5000, label: "5k+" },
   { value: 10000, label: "10k+" },
-  { value: 50000, label: "50k+" },
+  { value: 25000, label: "25k+" },
 ];
 
+// Range slider domain. Left end (1k) = no minimum,
+// right end (50k) = no maximum, because the API only
+// returns repos between those two values anyway.
 const SLIDER_MIN = 1000;
 const SLIDER_MAX = 50000;
 const SLIDER_STEP = 1000;
+
+// Keeps the two handles from overlapping (4 steps is
+// wider than a handle), so both can always be grabbed.
+const SLIDER_GAP = 4000;
+
+// Handle size in px. Used to line up the highlighted
+// bar with the native thumb positions.
+const THUMB = 14;
 
 interface Props {
   filters: Filters;
@@ -372,20 +386,80 @@ export default function FilterSidebar({
     });
   };
 
-  const starsValue =
+  // ── Star range state ──
+
+  const minValue =
     typeof filters.stars ===
     "number"
       ? filters.stars
       : SLIDER_MIN;
 
+  const maxValue =
+    typeof filters.starsMax ===
+    "number"
+      ? filters.starsMax
+      : SLIDER_MAX;
+
   const isPreset =
     typeof filters.stars ===
       "number" &&
+    filters.starsMax ===
+      "any" &&
     STAR_PRESETS.some(
       (preset) =>
         preset.value ===
         filters.stars
     );
+
+  const customActive =
+    (filters.stars !== "any" ||
+      filters.starsMax !==
+        "any") &&
+    !isPreset;
+
+  const minLabel = `${minValue / 1000}k`;
+  const maxLabel = `${maxValue / 1000}k`;
+
+  // Handle positions as 0-100 percentages.
+  const span = SLIDER_MAX - SLIDER_MIN;
+  const pMin =
+    ((minValue - SLIDER_MIN) / span) *
+    100;
+  const pMax =
+    ((maxValue - SLIDER_MIN) / span) *
+    100;
+
+  const handleMinChange = (
+    raw: number
+  ) => {
+    const next = Math.min(
+      raw,
+      maxValue - SLIDER_GAP
+    );
+
+    set(
+      "stars",
+      next <= SLIDER_MIN
+        ? "any"
+        : next
+    );
+  };
+
+  const handleMaxChange = (
+    raw: number
+  ) => {
+    const next = Math.max(
+      raw,
+      minValue + SLIDER_GAP
+    );
+
+    set(
+      "starsMax",
+      next >= SLIDER_MAX
+        ? "any"
+        : next
+    );
+  };
 
   const hasActive =
     filters.difficulty !==
@@ -399,6 +473,8 @@ export default function FilterSidebar({
     filters.authorType.length >
       0 ||
     filters.stars !==
+      "any" ||
+    filters.starsMax !==
       "any" ||
     filters.language !==
       "any" ||
@@ -416,10 +492,91 @@ export default function FilterSidebar({
         alignSelf: "start",
       }}
     >
+      {/* Styles for the two-handle range slider. Native range
+          inputs can't be styled inline, so they live here. */}
+      <style>{`
+        .stars-range {
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 100%;
+          height: ${THUMB}px;
+          margin: 0;
+          padding: 0;
+          background: transparent;
+          pointer-events: none;
+          -webkit-appearance: none;
+          appearance: none;
+        }
+        .stars-range:focus { outline: none; }
+        .stars-range::-webkit-slider-runnable-track {
+          height: ${THUMB}px;
+          background: transparent;
+          border: none;
+        }
+        .stars-range::-moz-range-track {
+          height: ${THUMB}px;
+          background: transparent;
+          border: none;
+        }
+        .stars-range::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          appearance: none;
+          box-sizing: border-box;
+          width: ${THUMB}px;
+          height: ${THUMB}px;
+          border-radius: 50%;
+          background: ${T.violet};
+          border: 2px solid #08090D;
+          box-shadow: 0 0 8px rgba(155,140,255,0.55);
+          cursor: pointer;
+          pointer-events: auto;
+        }
+        .stars-range::-moz-range-thumb {
+          box-sizing: border-box;
+          width: ${THUMB}px;
+          height: ${THUMB}px;
+          border-radius: 50%;
+          background: ${T.violet};
+          border: 2px solid #08090D;
+          box-shadow: 0 0 8px rgba(155,140,255,0.55);
+          cursor: pointer;
+          pointer-events: auto;
+        }
+        .stars-range:focus-visible::-webkit-slider-thumb {
+          box-shadow: 0 0 0 3px rgba(155,140,255,0.35);
+        }
+        .stars-range:focus-visible::-moz-range-thumb {
+          box-shadow: 0 0 0 3px rgba(155,140,255,0.35);
+        }
+
+                .filter-scroll {
+          scrollbar-width: thin;
+          scrollbar-color: rgba(155,140,255,0.32) transparent;
+        }
+        .filter-scroll::-webkit-scrollbar {
+          width: 6px;
+        }
+        .filter-scroll::-webkit-scrollbar-track {
+          background: transparent;
+          margin: 14px 0;
+        }
+        .filter-scroll::-webkit-scrollbar-thumb {
+          background: rgba(155,140,255,0.28);
+          border-radius: 999px;
+        }
+        .filter-scroll::-webkit-scrollbar-thumb:hover {
+          background: rgba(155,140,255,0.5);
+        }
+      `}</style>
+
       <div
+        className="filter-scroll"
         style={{
           padding:
             "15px 16px 8px",
+          maxHeight: "calc(100vh - 104px)",
+          overflowY: "auto",
           border:
             `1px solid ${T.border}`,
           borderRadius: 17,
@@ -514,16 +671,19 @@ export default function FilterSidebar({
           }
         >
           <Radio
-            label="Any"
+            label="Any (1k–50k)"
             checked={
               filters.stars ===
-              "any"
+                "any" &&
+              filters.starsMax ===
+                "any"
             }
             onChange={() =>
-              set(
-                "stars",
-                "any"
-              )
+              onChange({
+                ...filters,
+                stars: "any",
+                starsMax: "any",
+              })
             }
           />
 
@@ -538,19 +698,24 @@ export default function FilterSidebar({
                 }
                 checked={
                   filters.stars ===
-                  preset.value
+                    preset.value &&
+                  filters.starsMax ===
+                    "any"
                 }
                 onChange={() =>
-                  set(
-                    "stars",
-                    preset.value
-                  )
+                  onChange({
+                    ...filters,
+                    stars:
+                      preset.value,
+                    starsMax:
+                      "any",
+                  })
                 }
               />
             )
           )}
 
-          {/* Custom minimum slider */}
+          {/* Custom range slider */}
 
           <div
             style={{
@@ -560,9 +725,7 @@ export default function FilterSidebar({
               borderRadius: 9,
               border:
                 `1px solid ${
-                  filters.stars !==
-                    "any" &&
-                  !isPreset
+                  customActive
                     ? "rgba(155,140,255,0.22)"
                     : T.border
                 }`,
@@ -579,7 +742,7 @@ export default function FilterSidebar({
                 justifyContent:
                   "space-between",
                 marginBottom:
-                  7,
+                  9,
               }}
             >
               <span
@@ -592,15 +755,13 @@ export default function FilterSidebar({
                     650,
                 }}
               >
-                Custom minimum
+                Custom range
               </span>
 
               <span
                 style={{
                   color:
-                    filters.stars !==
-                      "any" &&
-                    !isPreset
+                    customActive
                       ? "#C7C2FF"
                       : T.faint,
                   fontFamily:
@@ -609,49 +770,107 @@ export default function FilterSidebar({
                     9,
                 }}
               >
-                {filters.stars !==
-                  "any" &&
-                !isPreset
-                  ? `${starsValue / 1000}k+`
+                {customActive
+                  ? `${minLabel} – ${maxLabel}`
                   : "—"}
               </span>
             </div>
 
-            <input
-              type="range"
-              min={
-                SLIDER_MIN
-              }
-              max={
-                SLIDER_MAX
-              }
-              step={
-                SLIDER_STEP
-              }
-              value={
-                starsValue
-              }
-              onChange={(
-                event
-              ) =>
-                set(
-                  "stars",
-                  Number(
-                    event
-                      .target
-                      .value
-                  )
-                )
-              }
+            <div
               style={{
-                width:
-                  "100%",
-                accentColor:
-                  T.violet,
-                cursor:
-                  "pointer",
+                position:
+                  "relative",
+                height: THUMB,
               }}
-            />
+            >
+              {/* Track */}
+              <div
+                style={{
+                  position:
+                    "absolute",
+                  left: 0,
+                  right: 0,
+                  top:
+                    (THUMB - 4) /
+                    2,
+                  height: 4,
+                  borderRadius: 2,
+                  background:
+                    "rgba(255,255,255,0.1)",
+                }}
+              />
+
+              {/* Highlighted part between the handles */}
+              <div
+                style={{
+                  position:
+                    "absolute",
+                  top:
+                    (THUMB - 4) /
+                    2,
+                  height: 4,
+                  borderRadius: 2,
+                  background:
+                    T.violet,
+                  opacity:
+                    customActive
+                      ? 1
+                      : 0.35,
+                  left: `calc(${pMin}% + ${
+                    (0.5 -
+                      pMin / 100) *
+                    THUMB
+                  }px)`,
+                  right: `calc(${
+                    100 - pMax
+                  }% + ${
+                    (pMax / 100 -
+                      0.5) *
+                    THUMB
+                  }px)`,
+                }}
+              />
+
+              <input
+                type="range"
+                className="stars-range"
+                aria-label="Minimum stars"
+                min={SLIDER_MIN}
+                max={SLIDER_MAX}
+                step={SLIDER_STEP}
+                value={minValue}
+                onChange={(
+                  event
+                ) =>
+                  handleMinChange(
+                    Number(
+                      event.target
+                        .value
+                    )
+                  )
+                }
+              />
+
+              <input
+                type="range"
+                className="stars-range"
+                aria-label="Maximum stars"
+                min={SLIDER_MIN}
+                max={SLIDER_MAX}
+                step={SLIDER_STEP}
+                value={maxValue}
+                onChange={(
+                  event
+                ) =>
+                  handleMaxChange(
+                    Number(
+                      event.target
+                        .value
+                    )
+                  )
+                }
+              />
+            </div>
 
             <div
               style={{
@@ -662,7 +881,7 @@ export default function FilterSidebar({
                 justifyContent:
                   "space-between",
                 marginTop:
-                  4,
+                  6,
                 color:
                   T.faint,
                 fontFamily:
