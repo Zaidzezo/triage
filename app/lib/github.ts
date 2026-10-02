@@ -52,6 +52,7 @@ export interface SearchIssuesPage {
   issues: SearchIssueResult[];
   hasNextPage: boolean;
   endCursor: string | null;
+  totalCount: number;
 }
 
 // ─────────────────────────────────────────────
@@ -72,15 +73,19 @@ function restHeaders(accessToken: string) {
 
 export async function searchRepositories(
   query: string,
-  accessToken: string
+  accessToken: string,
+  opts?: { minStars?: number; perPage?: number }
 ): Promise<SearchRepository[]> {
-  const q = `${query} in:name,description,readme archived:false fork:false`;
+  const minStars = opts?.minStars ?? 1000;
+  const perPage = opts?.perPage ?? 10;
+
+  const q = `${query} in:name,description,readme stars:>${minStars} archived:false fork:false`;
 
   const url =
     `${GITHUB_REST_URL}/search/repositories?` +
     new URLSearchParams({
       q,
-      per_page: "10",
+      per_page: String(perPage),
       sort: "stars",
       order: "desc",
     });
@@ -155,10 +160,18 @@ export async function fetchRepoMetadata(
 // paginated. Callers loop to reach their cap.
 // ─────────────────────────────────────────────
 
+export interface SearchIssuesOptions {
+  minStars?: number;
+  unassignedOnly?: boolean;
+  maxAgeMonths?: number;
+  repoScope?: string[];
+}
+
 export async function searchIssues(
   queryText: string,
   accessToken: string,
-  cursor?: string
+  cursor?: string,
+  opts?: SearchIssuesOptions
 ): Promise<SearchIssuesPage> {
   const query = `
     query SearchIssues(
@@ -168,13 +181,14 @@ export async function searchIssues(
       search(
         query: $query
         type: ISSUE
-        first: 50
+        first: 100
         after: $cursor
       ) {
         pageInfo {
           hasNextPage
           endCursor
         }
+        issueCount
 
         nodes {
           ... on Issue {
@@ -207,13 +221,24 @@ export async function searchIssues(
     }
   `;
 
-  const sixMonthsAgo = new Date();
-  sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-  const dateStr = sixMonthsAgo.toISOString().split("T")[0];
+  // ─────────────────────────────────────
+  // Filter knobs — defaults match prior
+  // hardcoded behavior exactly.
+  // ─────────────────────────────────────
+
+  const minStars = opts?.minStars ?? 1000;
+  const unassignedOnly = opts?.unassignedOnly ?? true;
+  const maxAgeMonths = opts?.maxAgeMonths ?? 6;
+
+  const cutoffDate = new Date();
+  cutoffDate.setMonth(cutoffDate.getMonth() - maxAgeMonths);
+  const dateStr = cutoffDate.toISOString().split("T")[0];
 
   const githubSearchQuery =
-  `${queryText.trim()} ` +
-  `is:issue state:open no:assignee stars:>1000 created:>${dateStr} sort:created-desc`;
+    `${queryText.trim()} ` +
+  `is:issue is:open ` +
+  `${unassignedOnly ? "no:assignee " : ""}` +
+  `stars:>${minStars} created:>${dateStr} sort:created-desc`;
 
   const response = await fetch(GITHUB_GRAPHQL_URL, {
     method: "POST",
@@ -264,9 +289,16 @@ export async function searchIssues(
       },
     }));
 
+  console.log(
+    `[searchIssues] q="${githubSearchQuery}" raw=${nodes.length} ` +
+    `kept=${issues.length} totalCount=${searchData?.issueCount ?? 0} ` +
+    `hasNextPage=${searchData?.pageInfo?.hasNextPage ?? false}`
+  );
+
   return {
     issues,
     hasNextPage: searchData?.pageInfo?.hasNextPage ?? false,
     endCursor: searchData?.pageInfo?.endCursor ?? null,
+    totalCount: searchData?.issueCount ?? 0,
   };
 }

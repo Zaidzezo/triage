@@ -4,6 +4,7 @@ import { getAccessToken } from "@/app/lib/getAccessToken";
 import {
   fetchRepoMetadata,
   searchIssues,
+  searchRepositories,
   type RepoMetadata,
   type SearchIssueResult,
 } from "@/app/lib/github";
@@ -13,9 +14,9 @@ import { prisma } from "@/app/lib/prisma";
 // SEARCH LIMITS
 // ─────────────────────────────────────
 
-const MAX_RESULTS = 200;        // global mode cap
+const MAX_RESULTS = 80;        // global mode cap
 const MAX_REPO_ISSUES = 100;    // exact-repo mode cap
-const MAX_GITHUB_PAGES = 8;     // global mode safety limit
+const MAX_GITHUB_PAGES = 10;     // global mode safety limit
 
 // ─────────────────────────────────────
 // HELPERS
@@ -376,16 +377,39 @@ console.log(
       if (!githubHasNextPage || results.length >= MAX_RESULTS) break;
 
       const githubResult = await searchIssues(input, accessToken, githubCursor);
-      for (const issue of githubResult.issues) {
-        if (seenIssueIds.has(issue.id)) continue;
+
+      // ─── DEBUG: trace cursor + id drift across pages ───
+      console.log(
+        `page ${page}: cursor_in=${githubCursor ?? "null"} cursor_out=${githubResult.endCursor} ` +
+        `first_id=${githubResult.issues[0]?.id} last_id=${githubResult.issues.at(-1)?.id}`
+      );
+
+      let dups = 0, lowStars = 0, kept = 0;
+
+            for (const issue of githubResult.issues) {
+        if (seenIssueIds.has(issue.id)) { dups++; continue; }
         // Defensive re-checks — GitHub already applies these
         // server-side, but they cost nothing client-side.
-        if ((issue.repository.stars ?? 0) < 1000) continue;
+        if ((issue.repository.stars ?? 0) < 1000) {
+          lowStars++;
+          if (lowStars <= 5) {
+            console.log(
+              `  rejected: ${issue.repository.nameWithOwner} stars=${issue.repository.stars}`
+            );
+          }
+          continue;
+        }
         // if (new Date(issue.createdAt) < sixMonthsAgo) continue;
         seenIssueIds.add(issue.id);
         results.push(issue);
+        kept++;
         if (results.length >= MAX_RESULTS) break;
       }
+
+      // ─── DEBUG: per-page filter breakdown ───
+      console.log(
+        `page ${page}: raw=${githubResult.issues.length} kept=${kept} dups=${dups} lowStars=${lowStars} runningTotal=${results.length}`
+      );
 
       githubHasNextPage = githubResult.hasNextPage;
       githubCursor = githubResult.endCursor ?? undefined;
