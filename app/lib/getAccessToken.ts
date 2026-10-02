@@ -12,16 +12,29 @@ export async function getAccessToken(): Promise<string> {
   const cookieStore = await cookies()
   const token = cookieStore.get(COOKIE_NAME)?.value
 
-  if (!token) throw new Error("NOT_AUTHENTICATED")
+  if (!token) {
+    throw new Error("NOT_AUTHENTICATED")
+  }
+
+  const secret =
+    process.env.AUTH_SECRET ??
+    process.env.NEXTAUTH_SECRET
+
+  if (!secret) {
+    throw new Error("Authentication secret is not configured")
+  }
 
   const payload = await decode({
     token,
-    secret: process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET!,
+    secret,
     salt: COOKIE_NAME,
   })
 
-  const encrypted = payload?.accessToken as string | undefined
-  if (!encrypted) throw new Error("NOT_AUTHENTICATED")
+  const encrypted = payload?.accessToken
+
+  if (typeof encrypted !== "string" || !encrypted) {
+    throw new Error("NOT_AUTHENTICATED")
+  }
 
   return decrypt(encrypted)
 }

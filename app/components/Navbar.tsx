@@ -1,51 +1,48 @@
-"use client";
+"use client"
 
 import {
   useEffect,
   useRef,
   useState,
-} from "react";
+} from "react"
 import {
-  Bookmark,
   ChevronDown,
-  Clock3,
   Compass,
-  UserRound,
+  LayoutDashboard,
   LogOut,
-} from "lucide-react";
+  UserRound,
+} from "lucide-react"
 import {
   signIn,
   signOut,
   useSession,
-} from "next-auth/react";
-import { usePathname } from "next/navigation";
-import Link from "next/link";
-import Image from "next/image";
+} from "next-auth/react"
+import { usePathname } from "next/navigation"
+import Link from "next/link"
+import Image from "next/image"
 import {
   Inter,
   JetBrains_Mono,
   Space_Grotesk,
-} from "next/font/google";
+} from "next/font/google"
 
 const inter = Inter({
   subsets: ["latin"],
   variable: "--font-inter",
-});
+})
 
 const grotesk = Space_Grotesk({
   subsets: ["latin"],
   variable: "--font-grotesk",
-});
+})
 
 const mono = JetBrains_Mono({
   subsets: ["latin"],
   variable: "--font-mono",
-});
+})
 
 const T = {
   bg: "#08090D",
-  glass: "rgba(13, 16, 24, 0.72)",
-  glassStrong: "rgba(20, 25, 37, 0.82)",
   border: "rgba(255,255,255,0.09)",
   borderBright: "rgba(255,255,255,0.15)",
   text: "#F5F7FB",
@@ -53,76 +50,85 @@ const T = {
   faint: "#565D6C",
   violet: "#9B8CFF",
   violetDim: "rgba(155,140,255,0.12)",
-};
+}
+
+const links = [
+  {
+    href: "/",
+    label: "Discover",
+    icon: <Compass size={14} />,
+  },
+  {
+    href: "/workspace",
+    label: "Workspace",
+    icon: <LayoutDashboard size={14} />,
+  },
+]
 
 export default function Navbar() {
-  const { data: session } = useSession();
+  const { data: session } = useSession()
+  const pathname = usePathname()
 
-  const pathname = usePathname();
+  const [dropdownOpen, setDropdownOpen] =
+    useState(false)
 
-  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const dropdownRef =
+    useRef<HTMLDivElement>(null)
 
-  const dropdownRef = useRef<HTMLDivElement>(null);
-
-  // Close avatar dropdown on outside click
   useEffect(() => {
     const handler = (event: MouseEvent) => {
       if (
         dropdownRef.current &&
-        !dropdownRef.current.contains(event.target as Node)
+        !dropdownRef.current.contains(
+          event.target as Node
+        )
       ) {
-        setDropdownOpen(false);
+        setDropdownOpen(false)
       }
-    };
+    }
 
-    document.addEventListener("mousedown", handler);
+    document.addEventListener(
+      "mousedown",
+      handler
+    )
 
     return () => {
-      document.removeEventListener("mousedown", handler);
-    };
-  }, []);
+      document.removeEventListener(
+        "mousedown",
+        handler
+      )
+    }
+  }, [])
 
-  // Close avatar dropdown on Escape key
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        setDropdownOpen(false);
+        setDropdownOpen(false)
       }
-    };
+    }
 
-    document.addEventListener("keydown", handler);
+    document.addEventListener(
+      "keydown",
+      handler
+    )
 
     return () => {
-      document.removeEventListener("keydown", handler);
-    };
-  }, []);
+      document.removeEventListener(
+        "keydown",
+        handler
+      )
+    }
+  }, [])
 
-  // Show at most 2 initials; fall back gracefully if name is missing
   const rawName =
-    session?.user?.githubUsername ?? session?.user?.name ?? "";
+    session?.user?.githubUsername ??
+    session?.user?.name ??
+    ""
 
   const initials =
     rawName.length > 0
       ? rawName.slice(0, 2).toUpperCase()
-      : "?";
-
-  const links = [
-    {
-      href: "/",
-      label: "Discover",
-      icon: <Compass size={14} />,
-    },
-    {
-      href: "/saved",
-      label: "Saved",
-      icon: <Bookmark size={14} />,
-    },
-    {
-      href: "/activity",
-      label: "Activity",
-      icon: <Clock3 size={14} />,
-    },
-  ];
+      : "?"
 
   return (
     <nav
@@ -136,15 +142,19 @@ export default function Navbar() {
         alignItems: "center",
         padding: "0 28px",
         gap: 22,
-        background: "rgba(8,9,13,0.72)",
-        backdropFilter: "blur(24px)",
-        WebkitBackdropFilter: "blur(24px)",
-        borderBottom: `1px solid ${T.border}`,
+        background:
+          "rgba(8,9,13,0.72)",
+        backdropFilter:
+          "blur(24px)",
+        WebkitBackdropFilter:
+          "blur(24px)",
+        borderBottom:
+          `1px solid ${T.border}`,
         color: T.text,
-        fontFamily: "var(--font-inter), system-ui, sans-serif",
+        fontFamily:
+          "var(--font-inter), system-ui, sans-serif",
       }}
     >
-      {/* Ambient underline */}
       <div
         aria-hidden
         style={{
@@ -159,16 +169,16 @@ export default function Navbar() {
         }}
       />
 
-      {/* Logo */}
       <Link
         href="/"
         style={{
           position: "relative",
           width: 290,
           height: 70,
-          marginBottom: 115,
           flexShrink: 0,
           textDecoration: "none",
+          display: "flex",
+          alignItems: "center",
         }}
       >
         <Image
@@ -178,14 +188,18 @@ export default function Navbar() {
           width={290}
           height={70}
           priority
-          style={{ objectFit: "contain" }}
+          style={{
+            objectFit: "contain",
+          }}
         />
       </Link>
 
-      {/* Push everything else to the right */}
-      <div style={{ flex: 1 }} />
+      <div
+        style={{
+          flex: 1,
+        }}
+      />
 
-      {/* Nav links */}
       <div
         style={{
           display: "flex",
@@ -193,42 +207,58 @@ export default function Navbar() {
           gap: 3,
         }}
       >
-        {links.map(({ href, label, icon }) => {
-          const active = pathname === href;
+        {links.map(
+          ({
+            href,
+            label,
+            icon,
+          }) => {
+            const active =
+              href === "/"
+                ? pathname === "/"
+                : pathname.startsWith(
+                    href
+                  )
 
-          return (
-            <Link
-              key={href}
-              href={href}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "8px 10px",
-                borderRadius: 8,
-                border: active
-                  ? "1px solid rgba(155,140,255,0.20)"
-                  : "1px solid transparent",
-                background: active
-                  ? T.violetDim
-                  : "transparent",
-                color: active
-                  ? "#D2CDFF"
-                  : T.muted,
-                textDecoration: "none",
-                fontSize: 11,
-                fontWeight: active ? 700 : 500,
-                whiteSpace: "nowrap",
-              }}
-            >
-              {icon}
-              {label}
-            </Link>
-          );
-        })}
+            return (
+              <Link
+                key={href}
+                href={href}
+                style={{
+                  display:
+                    "inline-flex",
+                  alignItems:
+                    "center",
+                  gap: 6,
+                  padding:
+                    "8px 10px",
+                  borderRadius: 8,
+                  border: active
+                    ? "1px solid rgba(155,140,255,0.20)"
+                    : "1px solid transparent",
+                  background: active
+                    ? T.violetDim
+                    : "transparent",
+                  color: active
+                    ? "#D2CDFF"
+                    : T.muted,
+                  textDecoration:
+                    "none",
+                  fontSize: 11,
+                  fontWeight:
+                    active ? 700 : 500,
+                  whiteSpace:
+                    "nowrap",
+                }}
+              >
+                {icon}
+                {label}
+              </Link>
+            )
+          }
+        )}
       </div>
 
-      {/* Account */}
       {session ? (
         <div
           ref={dropdownRef}
@@ -239,32 +269,43 @@ export default function Navbar() {
         >
           <button
             onClick={() =>
-              setDropdownOpen((prev) => !prev)
+              setDropdownOpen(
+                (prev) => !prev
+              )
             }
-            aria-expanded={dropdownOpen}
-            aria-haspopup="true"
+            aria-expanded={
+              dropdownOpen
+            }
+            aria-haspopup="menu"
             style={{
               display: "flex",
-              alignItems: "center",
+              alignItems:
+                "center",
               gap: 7,
               height: 39,
               padding: "0 8px",
-              border: `1px solid ${T.borderBright}`,
+              border:
+                `1px solid ${T.borderBright}`,
               borderRadius: 9,
-              background: "rgba(255,255,255,0.025)",
+              background:
+                "rgba(255,255,255,0.025)",
               color: T.text,
               cursor: "pointer",
             }}
           >
             {session.user?.image ? (
               <img
-                src={session.user.image}
+                src={
+                  session.user.image
+                }
                 alt=""
                 style={{
                   width: 25,
                   height: 25,
-                  borderRadius: "50%",
-                  objectFit: "cover",
+                  borderRadius:
+                    "50%",
+                  objectFit:
+                    "cover",
                 }}
               />
             ) : (
@@ -273,11 +314,16 @@ export default function Navbar() {
                   width: 25,
                   height: 25,
                   display: "grid",
-                  placeItems: "center",
-                  borderRadius: "50%",
-                  background: T.violetDim,
-                  color: "#D2CDFF",
-                  fontFamily: "var(--font-mono)",
+                  placeItems:
+                    "center",
+                  borderRadius:
+                    "50%",
+                  background:
+                    T.violetDim,
+                  color:
+                    "#D2CDFF",
+                  fontFamily:
+                    "var(--font-mono)",
                   fontSize: 8,
                   fontWeight: 800,
                 }}
@@ -296,61 +342,85 @@ export default function Navbar() {
             <div
               role="menu"
               style={{
-                position: "absolute",
-                top: "calc(100% + 8px)",
+                position:
+                  "absolute",
+                top:
+                  "calc(100% + 8px)",
                 right: 0,
                 width: 220,
                 padding: 5,
-                border: `1px solid ${T.borderBright}`,
+                border:
+                  `1px solid ${T.borderBright}`,
                 borderRadius: 12,
-                background: "rgba(13,16,24,0.97)",
-                backdropFilter: "blur(25px)",
-                WebkitBackdropFilter: "blur(25px)",
+                background:
+                  "rgba(13,16,24,0.97)",
+                backdropFilter:
+                  "blur(25px)",
+                WebkitBackdropFilter:
+                  "blur(25px)",
                 boxShadow:
                   "0 25px 70px rgba(0,0,0,0.45)",
               }}
             >
               <div
                 style={{
-                  padding: "10px 10px 12px",
-                  borderBottom: `1px solid ${T.border}`,
+                  padding:
+                    "10px 10px 12px",
+                  borderBottom:
+                    `1px solid ${T.border}`,
                 }}
               >
                 <div
                   style={{
-                    display: "flex",
-                    alignItems: "center",
+                    display:
+                      "flex",
+                    alignItems:
+                      "center",
                     gap: 8,
                   }}
                 >
                   <UserRound
                     size={13}
-                    color={T.violet}
+                    color={
+                      T.violet
+                    }
                   />
 
                   <div>
                     <p
                       style={{
                         margin: 0,
-                        color: T.text,
+                        color:
+                          T.text,
                         fontSize: 11,
-                        fontWeight: 700,
+                        fontWeight:
+                          700,
                       }}
                     >
-                      {session.user?.name ??
-                        session.user?.githubUsername}
+                      {session.user
+                        ?.name ??
+                        session.user
+                          ?.githubUsername}
                     </p>
 
                     <p
                       style={{
-                        margin: "2px 0 0",
-                        color: T.faint,
+                        margin:
+                          "2px 0 0",
+                        color:
+                          T.faint,
                         fontFamily:
                           "var(--font-mono)",
-                        fontSize: 8.5,
+                        fontSize:
+                          8.5,
                       }}
                     >
-                      @{session.user?.githubUsername}
+                      @
+                      {
+                        session
+                          .user
+                          ?.githubUsername
+                      }
                     </p>
                   </div>
                 </div>
@@ -358,24 +428,36 @@ export default function Navbar() {
 
               <button
                 role="menuitem"
-                onClick={() => signOut()}
+                onClick={() =>
+                  signOut()
+                }
                 style={{
                   width: "100%",
-                  display: "flex",
-                  alignItems: "center",
+                  display:
+                    "flex",
+                  alignItems:
+                    "center",
                   gap: 8,
                   marginTop: 4,
-                  padding: "9px 10px",
+                  padding:
+                    "9px 10px",
                   border: "none",
                   borderRadius: 8,
-                  background: "transparent",
-                  color: "#FF9CA9",
-                  cursor: "pointer",
-                  textAlign: "left",
-                  fontSize: 10.5,
+                  background:
+                    "transparent",
+                  color:
+                    "#FF9CA9",
+                  cursor:
+                    "pointer",
+                  textAlign:
+                    "left",
+                  fontSize:
+                    10.5,
                 }}
               >
-                <LogOut size={13} />
+                <LogOut
+                  size={13}
+                />
                 Sign out
               </button>
             </div>
@@ -383,17 +465,22 @@ export default function Navbar() {
         </div>
       ) : (
         <button
-          onClick={() => signIn("github")}
+          onClick={() =>
+            signIn("github")
+          }
           style={{
             height: 37,
-            padding: "0 14px",
+            padding:
+              "0 14px",
             border: "none",
             borderRadius: 9,
-            background: T.violet,
+            background:
+              T.violet,
             color: T.bg,
             fontSize: 11,
             fontWeight: 800,
-            cursor: "pointer",
+            cursor:
+              "pointer",
             boxShadow:
               "0 10px 28px rgba(155,140,255,0.18)",
           }}
@@ -427,5 +514,5 @@ export default function Navbar() {
         }
       `}</style>
     </nav>
-  );
+  )
 }

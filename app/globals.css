@@ -3,54 +3,119 @@
 :root {
   --background: #08090d;
   --foreground: #f5f7fb;
+
+  --triage-bg: #08090d;
+  --triage-bg-2: #0d1018;
+  --triage-surface: rgba(18, 22, 32, 0.58);
+  --triage-surface-strong: rgba(20, 25, 37, 0.82);
+
+  --triage-border: rgba(255, 255, 255, 0.08);
+  --triage-border-bright: rgba(255, 255, 255, 0.14);
+
+  --triage-text: #f5f7fb;
+  --triage-muted: #9299a8;
+  --triage-faint: #565d6c;
+
+  --triage-violet: #9b8cff;
+  --triage-violet-dim: rgba(155, 140, 255, 0.11);
+
+  --triage-lime: #b8f36b;
+  --triage-amber: #ffc978;
+  --triage-red: #ff8e9e;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-mono);
 }
 
 html {
-  background: #08090d;
+  min-height: 100%;
+  background: var(--triage-bg);
+  color-scheme: dark;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 body {
+  min-height: 100vh;
   margin: 0;
-  background: #08090d;
-  color: #f5f7fb;
+  background:
+    radial-gradient(
+      circle at 50% -15%,
+      rgba(155, 140, 255, 0.065),
+      transparent 34%
+    ),
+    var(--triage-bg);
+  color: var(--triage-text);
 }
 
 * {
   box-sizing: border-box;
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
+button,
+input,
+textarea,
+select {
+  font: inherit;
 }
 
-@keyframes shimmer {
-  0%,
-  100% {
-    background-color: #f3f4f6;
-  }
-
-  50% {
-    background-color: #e5e7eb;
-  }
+button {
+  -webkit-tap-highlight-color: transparent;
 }
 
-.skeleton {
-  animation: shimmer 1.5s ease-in-out infinite;
-  border-radius: 6px;
+a {
+  -webkit-tap-highlight-color: transparent;
 }
 
+img {
+  max-width: 100%;
+}
+
+::selection {
+  background: rgba(155, 140, 255, 0.28);
+  color: var(--triage-text);
+}
+
+/* Consistent keyboard focus across the application. */
+:focus-visible {
+  outline: 2px solid rgba(155, 140, 255, 0.72);
+  outline-offset: 3px;
+}
+
+/* Dark application scrollbar. */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(155, 140, 255, 0.28) transparent;
+}
+
+html::-webkit-scrollbar {
+  width: 8px;
+}
+
+html::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+html::-webkit-scrollbar-thumb {
+  background: rgba(155, 140, 255, 0.24);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+html::-webkit-scrollbar-thumb:hover {
+  background: rgba(155, 140, 255, 0.42);
+}
+
+/* Reusable dark horizontal/vertical scroll area. */
 .scroll-dark {
   scrollbar-width: thin;
-  scrollbar-color: rgba(155, 140, 255, 0.35) transparent;
+  scrollbar-color: rgba(155, 140, 255, 0.3) transparent;
 }
 
 .scroll-dark::-webkit-scrollbar {
@@ -68,5 +133,58 @@ body {
 }
 
 .scroll-dark::-webkit-scrollbar-thumb:hover {
-  background: rgba(155, 140, 255, 0.55);
+  background: rgba(155, 140, 255, 0.5);
+}
+
+/* Prevent accidental horizontal overflow from visual effects. */
+main,
+section {
+  max-width: 100%;
+}
+
+/* Existing loading utility. */
+@keyframes shimmer {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+
+  50% {
+    opacity: 0.75;
+  }
+}
+
+.skeleton {
+  animation: shimmer 1.5s ease-in-out infinite;
+  border-radius: 6px;
+}
+
+/* Existing spin utility. */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Reduced-motion accessibility. */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Small-screen defaults. */
+@media (max-width: 640px) {
+  body {
+    overflow-x: hidden;
+  }
 }

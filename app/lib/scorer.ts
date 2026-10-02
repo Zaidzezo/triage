@@ -1,51 +1,70 @@
-import OpenAI from "openai";
+import OpenAI from "openai"
 
-const MODEL = "deepseek/deepseek-v4-flash-free";
+const MODEL = "deepseek/deepseek-v4-flash-free"
 
-export type Difficulty = "easy" | "medium" | "hard";
+export type Difficulty = "easy" | "medium" | "hard"
 
 export interface ScoreResult {
-  difficulty: Difficulty;
-  explanation: string;
+  difficulty: Difficulty
+  explanation: string
 }
 
 function getClient(): OpenAI {
-  const apiKey = process.env.ORCAROUTER_API_KEY;
+  const apiKey = process.env.ORCAROUTER_API_KEY
 
   if (!apiKey) {
     throw new Error(
       "ORCAROUTER_API_KEY is not set in environment variables"
-    );
+    )
   }
 
   return new OpenAI({
     baseURL: "https://api.orcarouter.ai/v1",
     apiKey,
-  });
+  })
 }
 
-// Pulls the first {...} JSON object out of a string, even if it's
-// surrounded by reasoning text, markdown fences, or trailing commentary.
 function extractJsonObject(text: string): string | null {
-  const start = text.indexOf("{");
-  if (start === -1) return null;
+  const start = text.indexOf("{")
 
-  let depth = 0;
+  if (start === -1) {
+    return null
+  }
+
+  let depth = 0
+
   for (let i = start; i < text.length; i++) {
-    if (text[i] === "{") depth++;
-    if (text[i] === "}") depth--;
+    if (text[i] === "{") {
+      depth++
+    }
+
+    if (text[i] === "}") {
+      depth--
+    }
+
     if (depth === 0) {
-      return text.slice(start, i + 1);
+      return text.slice(start, i + 1)
     }
   }
-  return null;
+
+  return null
+}
+
+function getReasoningContent(
+  message: OpenAI.Chat.Completions.ChatCompletionMessage
+): string | undefined {
+  const value = message as unknown as Record<string, unknown>
+
+  return typeof value.reasoning_content === "string"
+    ? value.reasoning_content
+    : undefined
 }
 
 export async function scoreIssue(
   title: string,
   bodyPreview: string | null
 ): Promise<ScoreResult> {
-  const client = getClient();
+  const client = getClient()
 
   const prompt = `
 You are a senior open-source maintainer evaluating a GitHub issue for a developer who wants to contribute to the project.
@@ -79,57 +98,56 @@ Do not show your reasoning. Do not think out loud. Respond with ONLY the JSON ob
   "difficulty": "easy" | "medium" | "hard",
   "explanation": "2-3 concise sentences"
 }
-`;
+`
 
-  let completion: OpenAI.Chat.Completions.ChatCompletion;
+  let completion: OpenAI.Chat.Completions.ChatCompletion
 
   try {
     completion = await client.chat.completions.create({
       model: MODEL,
       messages: [{ role: "user", content: prompt }],
       temperature: 0.25,
-      max_tokens: 1200, // reasoning models need headroom beyond the final JSON
-      response_format: { type: "json_object" }, // constrains output where supported
-    });
-  } catch (error) {
-    throw new Error(`Error calling model API: ${error}`);
+      max_tokens: 1200,
+      response_format: { type: "json_object" },
+    })
+  } catch {
+    throw new Error("Model API request failed")
   }
 
-  const message = completion.choices?.[0]?.message;
+  const message = completion.choices?.[0]?.message
 
   const text =
     message?.content?.trim() ||
-    (message as any)?.reasoning_content?.trim();
+    getReasoningContent(message)?.trim()
 
   if (!text) {
-    throw new Error(
-      `Empty response from model: ${JSON.stringify(completion)}`
-    );
+    throw new Error("Model returned an empty response")
   }
 
-  let parsed: ScoreResult;
+  let parsed: ScoreResult
 
   try {
-    const clean = text.replace(/```json|```/g, "").trim();
-    const jsonStr = extractJsonObject(clean) ?? clean;
-    parsed = JSON.parse(jsonStr);
+    const clean = text.replace(/```json|```/g, "").trim()
+    const jsonStr = extractJsonObject(clean) ?? clean
+
+    parsed = JSON.parse(jsonStr) as ScoreResult
   } catch {
-    throw new Error(`Failed to parse model response: ${text}`);
+    throw new Error("Failed to parse model response")
   }
 
   if (!["easy", "medium", "hard"].includes(parsed.difficulty)) {
-    throw new Error(`Invalid difficulty value: ${parsed.difficulty}`);
+    throw new Error("Model returned an invalid difficulty")
   }
 
   if (
     typeof parsed.explanation !== "string" ||
     parsed.explanation.trim().length < 20
   ) {
-    throw new Error("Model returned an unusable explanation");
+    throw new Error("Model returned an unusable explanation")
   }
 
   return {
     difficulty: parsed.difficulty,
     explanation: parsed.explanation.trim(),
-  };
+  }
 }

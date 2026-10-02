@@ -2,22 +2,26 @@
 
 import { useState } from "react";
 import {
+  Check,
   ChevronDown,
   Clock3,
   Code2,
+  Filter,
   GitPullRequest,
   MessageSquare,
+  RotateCcw,
   Star,
   UserRound,
 } from "lucide-react";
 
 const T = {
-  border: "rgba(255,255,255,0.09)",
+  border: "rgba(255,255,255,0.08)",
+  borderBright: "rgba(255,255,255,0.14)",
   text: "#F5F7FB",
   muted: "#9299A8",
   faint: "#565D6C",
   violet: "#9B8CFF",
-  violetDim: "rgba(155,140,255,0.12)",
+  violetDim: "rgba(155,140,255,0.11)",
   lime: "#B8F36B",
   amber: "#FFC978",
   red: "#FF8E9E",
@@ -48,10 +52,6 @@ export interface Filters {
 
   authorType: string[];
 
-  // Star range. The API already limits repos
-  // to 1000-49,999 stars, so:
-  //   stars    "any" = no minimum, number = minimum (inclusive)
-  //   starsMax "any" = no maximum, number = maximum (inclusive)
   stars: "any" | number;
   starsMax: "any" | number;
 
@@ -76,43 +76,23 @@ export const DEFAULT_FILTERS: Filters = {
   date: "any",
 };
 
-// Presets are "N+" minimums with no maximum.
-const STAR_PRESETS: {
-  value: number;
-  label: string;
-}[] = [
+const STAR_PRESETS = [
   { value: 5000, label: "5k+" },
   { value: 10000, label: "10k+" },
   { value: 25000, label: "25k+" },
 ];
 
-// Range slider domain. Left end (1k) = no minimum,
-// right end (50k) = no maximum, because the API only
-// returns repos between those two values anyway.
 const SLIDER_MIN = 1000;
 const SLIDER_MAX = 50000;
 const SLIDER_STEP = 1000;
-
-// Keeps the two handles from overlapping (4 steps is
-// wider than a handle), so both can always be grabbed.
 const SLIDER_GAP = 4000;
-
-// Handle size in px. Used to line up the highlighted
-// bar with the native thumb positions.
 const THUMB = 14;
 
 interface Props {
   filters: Filters;
-  onChange: (
-    filters: Filters
-  ) => void;
+  onChange: (filters: Filters) => void;
   onClear: () => void;
   availableLanguages: string[];
-
-  // In global search mode hasLinkedPr is
-  // always false (GitHub search does not
-  // fetch timelineItems), so the filter is
-  // meaningless there and gets hidden.
   isGlobalSearch: boolean;
 }
 
@@ -127,57 +107,48 @@ function Section({
   children: React.ReactNode;
   defaultOpen?: boolean;
 }) {
-  const [open, setOpen] =
-    useState(defaultOpen);
+  const [open, setOpen] = useState(defaultOpen);
 
   return (
     <div
       style={{
-        padding:
-          "3px 0 11px",
-        borderBottom:
-          `1px solid ${T.border}`,
+        padding: "0 0 12px",
+        borderBottom: `1px solid ${T.border}`,
       }}
     >
       <button
-        onClick={() =>
-          setOpen(
-            (previous) =>
-              !previous
-          )
-        }
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
         style={{
           width: "100%",
+          minHeight: 42,
           display: "flex",
-          alignItems:
-            "center",
-          justifyContent:
-            "space-between",
-          padding: "10px 0",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: 0,
           border: "none",
-          background:
-            "transparent",
+          background: "transparent",
           color: T.text,
-          cursor:
-            "pointer",
+          cursor: "pointer",
         }}
       >
         <span
           style={{
             display: "flex",
-            alignItems:
-              "center",
+            alignItems: "center",
             gap: 8,
           }}
         >
           <span
             style={{
-              color:
-                T.faint,
-              display:
-                "grid",
-              placeItems:
-                "center",
+              width: 26,
+              height: 26,
+              display: "grid",
+              placeItems: "center",
+              borderRadius: 7,
+              background: "rgba(255,255,255,0.025)",
+              color: T.faint,
             }}
           >
             {icon}
@@ -199,9 +170,8 @@ function Section({
           style={{
             transform: open
               ? "rotate(180deg)"
-              : "none",
-            transition:
-              "transform 0.18s ease",
+              : "rotate(0deg)",
+            transition: "transform 180ms ease",
           }}
         />
       </button>
@@ -209,7 +179,7 @@ function Section({
       {open && (
         <div
           style={{
-            paddingBottom: 4,
+            paddingTop: 4,
           }}
         >
           {children}
@@ -230,51 +200,46 @@ function Radio({
   onChange: () => void;
   color?: string;
 }) {
+  const accent = color ?? T.violet;
+
   return (
     <button
       type="button"
       onClick={onChange}
+      aria-pressed={checked}
       style={{
         width: "100%",
+        minHeight: 30,
         display: "flex",
-        alignItems:
-          "center",
+        alignItems: "center",
         gap: 8,
-        padding: "5px 0",
+        padding: "3px 0",
         border: "none",
-        background:
-          "transparent",
-        color:
-          checked
-            ? T.text
-            : T.muted,
-        cursor:
-          "pointer",
-        textAlign:
-          "left",
+        background: "transparent",
+        color: checked ? T.text : T.muted,
+        cursor: "pointer",
+        textAlign: "left",
         fontSize: 10.5,
+        transition:
+          "color 150ms ease",
       }}
     >
       <span
         style={{
-          width: 13,
-          height: 13,
+          width: 14,
+          height: 14,
           flexShrink: 0,
           display: "grid",
-          placeItems:
-            "center",
-          borderRadius:
-            "50%",
+          placeItems: "center",
+          borderRadius: "50%",
           border: `1px solid ${
             checked
-              ? color ??
-                T.violet
-              : "rgba(255,255,255,0.16)"
+              ? accent
+              : "rgba(255,255,255,0.15)"
           }`,
-          background:
-            checked
-              ? T.violetDim
-              : "transparent",
+          background: checked
+            ? `${accent}16`
+            : "transparent",
         }}
       >
         {checked && (
@@ -282,16 +247,9 @@ function Radio({
             style={{
               width: 5,
               height: 5,
-              borderRadius:
-                "50%",
-              background:
-                color ??
-                T.violet,
-              boxShadow:
-                `0 0 8px ${
-                  color ??
-                  T.violet
-                }`,
+              borderRadius: "50%",
+              background: accent,
+              boxShadow: `0 0 8px ${accent}`,
             }}
           />
         )}
@@ -302,7 +260,7 @@ function Radio({
   );
 }
 
-function Check({
+function CheckFilter({
   label,
   checked,
   onChange,
@@ -315,51 +273,49 @@ function Check({
     <button
       type="button"
       onClick={onChange}
+      aria-pressed={checked}
       style={{
         width: "100%",
+        minHeight: 30,
         display: "flex",
-        alignItems:
-          "center",
+        alignItems: "center",
         gap: 8,
-        padding: "5px 0",
+        padding: "3px 0",
         border: "none",
-        background:
-          "transparent",
-        color:
-          checked
-            ? T.text
-            : T.muted,
-        cursor:
-          "pointer",
-        textAlign:
-          "left",
+        background: "transparent",
+        color: checked ? T.text : T.muted,
+        cursor: "pointer",
+        textAlign: "left",
         fontSize: 10.5,
       }}
     >
       <span
         style={{
-          width: 13,
-          height: 13,
+          width: 14,
+          height: 14,
           flexShrink: 0,
           display: "grid",
-          placeItems:
-            "center",
+          placeItems: "center",
           borderRadius: 4,
           border: `1px solid ${
             checked
               ? T.violet
-              : "rgba(255,255,255,0.16)"
+              : "rgba(255,255,255,0.15)"
           }`,
-          background:
-            checked
-              ? T.violet
-              : "transparent",
+          background: checked
+            ? T.violet
+            : "transparent",
           color: "#08090D",
           fontSize: 9,
           fontWeight: 900,
         }}
       >
-        {checked ? "✓" : ""}
+        {checked && (
+          <Check
+            size={9}
+            strokeWidth={3}
+          />
+        )}
       </span>
 
       {label}
@@ -374,9 +330,7 @@ export default function FilterSidebar({
   availableLanguages,
   isGlobalSearch,
 }: Props) {
-  const set = <
-    K extends keyof Filters
-  >(
+  const set = <K extends keyof Filters>(
     key: K,
     value: Filters[K]
   ) => {
@@ -386,52 +340,39 @@ export default function FilterSidebar({
     });
   };
 
-  // ── Star range state ──
-
   const minValue =
-    typeof filters.stars ===
-    "number"
+    typeof filters.stars === "number"
       ? filters.stars
       : SLIDER_MIN;
 
   const maxValue =
-    typeof filters.starsMax ===
-    "number"
+    typeof filters.starsMax === "number"
       ? filters.starsMax
       : SLIDER_MAX;
 
   const isPreset =
-    typeof filters.stars ===
-      "number" &&
-    filters.starsMax ===
-      "any" &&
+    typeof filters.stars === "number" &&
+    filters.starsMax === "any" &&
     STAR_PRESETS.some(
       (preset) =>
-        preset.value ===
-        filters.stars
+        preset.value === filters.stars
     );
 
   const customActive =
     (filters.stars !== "any" ||
-      filters.starsMax !==
-        "any") &&
+      filters.starsMax !== "any") &&
     !isPreset;
 
-  const minLabel = `${minValue / 1000}k`;
-  const maxLabel = `${maxValue / 1000}k`;
+  const span =
+    SLIDER_MAX - SLIDER_MIN;
 
-  // Handle positions as 0-100 percentages.
-  const span = SLIDER_MAX - SLIDER_MIN;
   const pMin =
-    ((minValue - SLIDER_MIN) / span) *
-    100;
-  const pMax =
-    ((maxValue - SLIDER_MIN) / span) *
-    100;
+    ((minValue - SLIDER_MIN) / span) * 100;
 
-  const handleMinChange = (
-    raw: number
-  ) => {
+  const pMax =
+    ((maxValue - SLIDER_MIN) / span) * 100;
+
+  const handleMinChange = (raw: number) => {
     const next = Math.min(
       raw,
       maxValue - SLIDER_GAP
@@ -445,9 +386,7 @@ export default function FilterSidebar({
     );
   };
 
-  const handleMaxChange = (
-    raw: number
-  ) => {
+  const handleMaxChange = (raw: number) => {
     const next = Math.max(
       raw,
       minValue + SLIDER_GAP
@@ -462,76 +401,102 @@ export default function FilterSidebar({
   };
 
   const hasActive =
-    filters.difficulty !==
-      "any" ||
-    filters.comments !==
-      "any" ||
-    filters.assigned !==
-      "any" ||
-    filters.linkedPr !==
-      "any" ||
-    filters.authorType.length >
-      0 ||
-    filters.stars !==
-      "any" ||
-    filters.starsMax !==
-      "any" ||
-    filters.language !==
-      "any" ||
-    filters.date !==
-      "any";
+    filters.difficulty !== "any" ||
+    filters.comments !== "any" ||
+    filters.assigned !== "any" ||
+    filters.linkedPr !== "any" ||
+    filters.authorType.length > 0 ||
+    filters.stars !== "any" ||
+    filters.starsMax !== "any" ||
+    filters.language !== "any" ||
+    filters.date !== "any";
+
+  const activeCount =
+    Number(
+      filters.difficulty !== "any"
+    ) +
+    Number(
+      filters.comments !== "any"
+    ) +
+    Number(
+      filters.assigned !== "any"
+    ) +
+    Number(
+      filters.linkedPr !== "any"
+    ) +
+    Number(
+      filters.authorType.length > 0
+    ) +
+    Number(
+      filters.stars !== "any" ||
+        filters.starsMax !== "any"
+    ) +
+    Number(
+      filters.language !== "any"
+    ) +
+    Number(
+      filters.date !== "any"
+    );
 
   return (
     <aside
       className="filter-sidebar"
       style={{
-        width: 250,
+        width: 258,
         flexShrink: 0,
         position: "sticky",
-        top: 88,
-        alignSelf: "start",
+        top: 84,
+        alignSelf: "flex-start",
       }}
     >
-      {/* Styles for the two-handle range slider. Native range
-          inputs can't be styled inline, so they live here. */}
       <style>{`
+        .filter-sidebar button:hover {
+          color: ${T.text} !important;
+        }
+
         .stars-range {
           position: absolute;
-          left: 0;
-          top: 0;
+          inset: 0;
           width: 100%;
           height: ${THUMB}px;
           margin: 0;
           padding: 0;
           background: transparent;
           pointer-events: none;
-          -webkit-appearance: none;
           appearance: none;
+          -webkit-appearance: none;
         }
-        .stars-range:focus { outline: none; }
+
+        .stars-range:focus {
+          outline: none;
+        }
+
         .stars-range::-webkit-slider-runnable-track {
           height: ${THUMB}px;
           background: transparent;
           border: none;
         }
+
         .stars-range::-moz-range-track {
           height: ${THUMB}px;
           background: transparent;
           border: none;
         }
+
         .stars-range::-webkit-slider-thumb {
-          -webkit-appearance: none;
           appearance: none;
+          -webkit-appearance: none;
           box-sizing: border-box;
           width: ${THUMB}px;
           height: ${THUMB}px;
           border-radius: 50%;
           background: ${T.violet};
           border: 2px solid #08090D;
-          box-shadow: 0 0 8px rgba(155,140,255,0.55);
+          box-shadow: 0 0 9px rgba(155,140,255,0.5);
           cursor: pointer;
           pointer-events: auto;
         }
+
         .stars-range::-moz-range-thumb {
           box-sizing: border-box;
           width: ${THUMB}px;
@@ -539,104 +504,176 @@ export default function FilterSidebar({
           border-radius: 50%;
           background: ${T.violet};
           border: 2px solid #08090D;
-          box-shadow: 0 0 8px rgba(155,140,255,0.55);
+          box-shadow: 0 0 9px rgba(155,140,255,0.5);
           cursor: pointer;
           pointer-events: auto;
         }
+
         .stars-range:focus-visible::-webkit-slider-thumb {
-          box-shadow: 0 0 0 3px rgba(155,140,255,0.35);
-        }
-        .stars-range:focus-visible::-moz-range-thumb {
-          box-shadow: 0 0 0 3px rgba(155,140,255,0.35);
+          box-shadow:
+            0 0 0 3px rgba(155,140,255,0.25),
+            0 0 10px rgba(155,140,255,0.5);
         }
 
-                .filter-scroll {
-          scrollbar-width: thin;
-          scrollbar-color: rgba(155,140,255,0.32) transparent;
+        .stars-range:focus-visible::-moz-range-thumb {
+          box-shadow:
+            0 0 0 3px rgba(155,140,255,0.25),
+            0 0 10px rgba(155,140,255,0.5);
         }
+
+        .filter-scroll {
+          scrollbar-width: thin;
+          scrollbar-color: rgba(155,140,255,0.28) transparent;
+        }
+
         .filter-scroll::-webkit-scrollbar {
           width: 6px;
         }
+
         .filter-scroll::-webkit-scrollbar-track {
           background: transparent;
-          margin: 14px 0;
         }
+
         .filter-scroll::-webkit-scrollbar-thumb {
-          background: rgba(155,140,255,0.28);
+          background: rgba(155,140,255,0.24);
           border-radius: 999px;
         }
+
         .filter-scroll::-webkit-scrollbar-thumb:hover {
-          background: rgba(155,140,255,0.5);
+          background: rgba(155,140,255,0.44);
+        }
+
+        @media (max-width: 980px) {
+          .filter-sidebar {
+            width: 100% !important;
+            position: relative !important;
+            top: auto !important;
+          }
+
+          .filter-scroll {
+            max-height: 440px !important;
+          }
+        }
+
+        @media (max-width: 640px) {
+          .filter-scroll {
+            max-height: none !important;
+          }
         }
       `}</style>
 
       <div
         className="filter-scroll"
         style={{
-          padding:
-            "15px 16px 8px",
-          maxHeight: "calc(100vh - 104px)",
+          maxHeight:
+            "calc(100vh - 100px)",
           overflowY: "auto",
+          padding: "13px 15px 7px",
           border:
             `1px solid ${T.border}`,
-          borderRadius: 17,
+          borderRadius: 16,
           background:
-            "rgba(14,17,25,0.62)",
-          backdropFilter:
-            "blur(22px)",
+            "linear-gradient(145deg, rgba(17,21,30,0.78), rgba(11,14,21,0.72))",
+          backdropFilter: "blur(22px)",
           WebkitBackdropFilter:
             "blur(22px)",
           boxShadow:
             "0 24px 70px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.045)",
         }}
       >
-        {/* FILTER HEADER */}
+        {/* HEADER */}
 
         <div
           style={{
             display: "flex",
-            alignItems:
-              "center",
-            justifyContent:
-              "space-between",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 10,
+            minHeight: 36,
             marginBottom: 4,
           }}
         >
           <div
             style={{
               display: "flex",
-              alignItems:
-                "center",
-              gap: 7,
+              alignItems: "center",
+              gap: 8,
             }}
           >
             <span
               style={{
-                width: 6,
-                height: 6,
-                borderRadius:
-                  "50%",
-                background:
-                  T.violet,
-                boxShadow:
-                  `0 0 10px ${T.violet}`,
-              }}
-            />
-
-            <span
-              style={{
-                color: T.text,
-                fontFamily:
-                  "var(--font-mono)",
-                fontSize: 9,
-                letterSpacing:
-                  "0.08em",
-                textTransform:
-                  "uppercase",
+                width: 29,
+                height: 29,
+                display: "grid",
+                placeItems: "center",
+                borderRadius: 8,
+                background: T.violetDim,
+                border:
+                  "1px solid rgba(155,140,255,0.18)",
+                color: T.violet,
               }}
             >
-              Filters
+              <Filter size={13} />
             </span>
+
+            <div>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 7,
+                }}
+              >
+                <span
+                  style={{
+                    color: T.text,
+                    fontFamily:
+                      "var(--font-mono)",
+                    fontSize: 9,
+                    letterSpacing:
+                      "0.08em",
+                    textTransform:
+                      "uppercase",
+                  }}
+                >
+                  Filters
+                </span>
+
+                {activeCount > 0 && (
+                  <span
+                    style={{
+                      minWidth: 17,
+                      height: 17,
+                      padding: "0 5px",
+                      display: "inline-grid",
+                      placeItems: "center",
+                      borderRadius: 999,
+                      background:
+                        T.violetDim,
+                      border:
+                        "1px solid rgba(155,140,255,0.18)",
+                      color: "#D2CDFF",
+                      fontFamily:
+                        "var(--font-mono)",
+                      fontSize: 8,
+                      fontWeight: 800,
+                    }}
+                  >
+                    {activeCount}
+                  </span>
+                )}
+              </div>
+
+              <div
+                style={{
+                  marginTop: 2,
+                  color: T.faint,
+                  fontSize: 8.5,
+                }}
+              >
+                Narrow the issue set
+              </div>
+            </div>
           </div>
 
           {hasActive && (
@@ -644,85 +681,57 @@ export default function FilterSidebar({
               type="button"
               onClick={onClear}
               style={{
-                padding: 0,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 5,
+                padding: "6px 7px",
                 border: "none",
+                borderRadius: 7,
                 background:
                   "transparent",
-                color:
-                  T.violet,
-                cursor:
-                  "pointer",
-                fontSize: 9.5,
-                fontWeight:
-                  700,
+                color: T.violet,
+                cursor: "pointer",
+                fontSize: 9,
+                fontWeight: 700,
               }}
             >
-              clear
+              <RotateCcw size={10} />
+              Reset
             </button>
           )}
         </div>
 
-        {/* REPOSITORY FILTERS */}
+        {/* STARS */}
 
         <Section
-          title="Stars"
-          icon={
-            <Star size={13} />
-          }
+          title="Repository stars"
+          icon={<Star size={12} />}
         >
-          <Radio
-            label="Any (1k–50k)"
-            checked={
-              filters.stars ===
-                "any" &&
-              filters.starsMax ===
-                "any"
-            }
-            onChange={() =>
-              onChange({
-                ...filters,
-                stars: "any",
-                starsMax: "any",
-              })
-            }
-          />
-
-          {STAR_PRESETS.map(
-            (preset) => (
-              <Radio
-                key={
-                  preset.value
-                }
-                label={
-                  preset.label
-                }
-                checked={
-                  filters.stars ===
-                    preset.value &&
-                  filters.starsMax ===
-                    "any"
-                }
-                onChange={() =>
-                  onChange({
-                    ...filters,
-                    stars:
-                      preset.value,
-                    starsMax:
-                      "any",
-                  })
-                }
-              />
-            )
-          )}
-
-          {/* Custom range slider */}
+          {STAR_PRESETS.map((preset) => (
+            <Radio
+              key={preset.value}
+              label={preset.label}
+              checked={
+                filters.stars ===
+                  preset.value &&
+                filters.starsMax ===
+                  "any"
+              }
+              onChange={() =>
+                onChange({
+                  ...filters,
+                  stars: preset.value,
+                  starsMax: "any",
+                })
+              }
+            />
+          ))}
 
           <div
             style={{
               marginTop: 9,
-              padding:
-                "9px 10px 10px",
-              borderRadius: 9,
+              padding: "10px 10px 9px",
+              borderRadius: 10,
               border:
                 `1px solid ${
                   customActive
@@ -735,24 +744,19 @@ export default function FilterSidebar({
           >
             <div
               style={{
-                display:
-                  "flex",
-                alignItems:
-                  "center",
+                display: "flex",
                 justifyContent:
                   "space-between",
-                marginBottom:
-                  9,
+                alignItems: "center",
+                gap: 8,
+                marginBottom: 10,
               }}
             >
               <span
                 style={{
-                  color:
-                    T.muted,
-                  fontSize:
-                    9.5,
-                  fontWeight:
-                    650,
+                  color: T.muted,
+                  fontSize: 9.5,
+                  fontWeight: 650,
                 }}
               >
                 Custom range
@@ -760,88 +764,80 @@ export default function FilterSidebar({
 
               <span
                 style={{
-                  color:
-                    customActive
-                      ? "#C7C2FF"
-                      : T.faint,
+                  color: customActive
+                    ? "#C7C2FF"
+                    : T.faint,
                   fontFamily:
                     "var(--font-mono)",
-                  fontSize:
-                    9,
+                  fontSize: 8.5,
                 }}
               >
                 {customActive
-                  ? `${minLabel} – ${maxLabel}`
-                  : "—"}
+                  ? `${minValue / 1000}k – ${maxValue / 1000}k`
+                  : "not set"}
               </span>
             </div>
 
             <div
               style={{
-                position:
-                  "relative",
+                position: "relative",
                 height: THUMB,
               }}
             >
-              {/* Track */}
               <div
+                aria-hidden
                 style={{
-                  position:
-                    "absolute",
+                  position: "absolute",
                   left: 0,
                   right: 0,
                   top:
-                    (THUMB - 4) /
-                    2,
+                    (THUMB - 4) / 2,
                   height: 4,
-                  borderRadius: 2,
+                  borderRadius: 99,
                   background:
-                    "rgba(255,255,255,0.1)",
+                    "rgba(255,255,255,0.09)",
                 }}
               />
 
-              {/* Highlighted part between the handles */}
               <div
+                aria-hidden
                 style={{
-                  position:
-                    "absolute",
+                  position: "absolute",
                   top:
-                    (THUMB - 4) /
-                    2,
+                    (THUMB - 4) / 2,
                   height: 4,
-                  borderRadius: 2,
-                  background:
-                    T.violet,
+                  borderRadius: 99,
+                  left:
+                    `calc(${pMin}% + ${
+                      (0.5 -
+                        pMin / 100) *
+                      THUMB
+                    }px)`,
+                  right:
+                    `calc(${
+                      100 - pMax
+                    }% + ${
+                      (pMax / 100 -
+                        0.5) *
+                      THUMB
+                    }px)`,
+                  background: T.violet,
                   opacity:
                     customActive
                       ? 1
-                      : 0.35,
-                  left: `calc(${pMin}% + ${
-                    (0.5 -
-                      pMin / 100) *
-                    THUMB
-                  }px)`,
-                  right: `calc(${
-                    100 - pMax
-                  }% + ${
-                    (pMax / 100 -
-                      0.5) *
-                    THUMB
-                  }px)`,
+                      : 0.3,
                 }}
               />
 
               <input
                 type="range"
                 className="stars-range"
-                aria-label="Minimum stars"
+                aria-label="Minimum repository stars"
                 min={SLIDER_MIN}
                 max={SLIDER_MAX}
                 step={SLIDER_STEP}
                 value={minValue}
-                onChange={(
-                  event
-                ) =>
+                onChange={(event) =>
                   handleMinChange(
                     Number(
                       event.target
@@ -854,14 +850,12 @@ export default function FilterSidebar({
               <input
                 type="range"
                 className="stars-range"
-                aria-label="Maximum stars"
+                aria-label="Maximum repository stars"
                 min={SLIDER_MIN}
                 max={SLIDER_MAX}
                 step={SLIDER_STEP}
                 value={maxValue}
-                onChange={(
-                  event
-                ) =>
+                onChange={(event) =>
                   handleMaxChange(
                     Number(
                       event.target
@@ -874,20 +868,14 @@ export default function FilterSidebar({
 
             <div
               style={{
-                display:
-                  "flex",
-                alignItems:
-                  "center",
+                display: "flex",
                 justifyContent:
                   "space-between",
-                marginTop:
-                  6,
-                color:
-                  T.faint,
+                marginTop: 6,
+                color: T.faint,
                 fontFamily:
                   "var(--font-mono)",
-                fontSize:
-                  8,
+                fontSize: 8,
               }}
             >
               <span>1k</span>
@@ -896,35 +884,17 @@ export default function FilterSidebar({
           </div>
         </Section>
 
-        <Section
-          title="Main language"
-          icon={
-            <Code2 size={13} />
-          }
-        >
-          <Radio
-            label="Any"
-            checked={
-              filters.language ===
-              "any"
-            }
-            onChange={() =>
-              set(
-                "language",
-                "any"
-              )
-            }
-          />
+        {/* LANGUAGE */}
 
+        <Section
+          title="Language"
+          icon={<Code2 size={12} />}
+        >
           {availableLanguages.map(
             (language) => (
               <Radio
-                key={
-                  language
-                }
-                label={
-                  language
-                }
+                key={language}
+                label={language}
                 checked={
                   filters.language ===
                   language
@@ -940,28 +910,12 @@ export default function FilterSidebar({
           )}
         </Section>
 
-        {/* ISSUE FILTERS */}
+        {/* DIFFICULTY */}
 
         <Section
           title="Difficulty"
-          icon={
-            <Star size={13} />
-          }
+          icon={<Star size={12} />}
         >
-          <Radio
-            label="Any"
-            checked={
-              filters.difficulty ===
-              "any"
-            }
-            onChange={() =>
-              set(
-                "difficulty",
-                "any"
-              )
-            }
-          />
-
           <Radio
             label="Easy"
             color={T.lime}
@@ -970,10 +924,7 @@ export default function FilterSidebar({
               "easy"
             }
             onChange={() =>
-              set(
-                "difficulty",
-                "easy"
-              )
+              set("difficulty", "easy")
             }
           />
 
@@ -1000,111 +951,79 @@ export default function FilterSidebar({
               "hard"
             }
             onChange={() =>
-              set(
-                "difficulty",
-                "hard"
-              )
+              set("difficulty", "hard")
             }
           />
         </Section>
 
+        {/* ISSUE AGE */}
+
         <Section
-          title="Issue date"
-          icon={
-            <Clock3 size={13} />
-          }
+          title="Issue age"
+          icon={<Clock3 size={12} />}
         >
           {[
-            ["any", "Any time"],
-            [
-              "day",
-              "Last 24 hours",
-            ],
-            [
-              "week",
-              "Last 7 days",
-            ],
-            [
-              "month",
-              "Last 30 days",
-            ],
-          ].map(
-            ([value, label]) => (
-              <Radio
-                key={value}
-                label={label}
-                checked={
-                  filters.date ===
-                  value
-                }
-                onChange={() =>
-                  set(
-                    "date",
-                    value as Filters["date"]
-                  )
-                }
-              />
-            )
-          )}
+            ["day", "Last 24 hours"],
+            ["week", "Last 7 days"],
+            ["month", "Last 30 days"],
+          ].map(([value, label]) => (
+            <Radio
+              key={value}
+              label={label}
+              checked={
+                filters.date ===
+                value
+              }
+              onChange={() =>
+                set(
+                  "date",
+                  value as Filters["date"]
+                )
+              }
+            />
+          ))}
         </Section>
+
+        {/* COMMENTS */}
 
         <Section
           title="Comments"
           icon={
-            <MessageSquare
-              size={13}
-            />
+            <MessageSquare size={12} />
           }
         >
           {[
-            ["any", "Any"],
             ["none", "None"],
             ["1-5", "1–5"],
             ["6-20", "6–20"],
             ["20+", "20+"],
-          ].map(
-            ([value, label]) => (
-              <Radio
-                key={value}
-                label={label}
-                checked={
-                  filters.comments ===
-                  value
-                }
-                onChange={() =>
-                  set(
-                    "comments",
-                    value as Filters["comments"]
-                  )
-                }
-              />
-            )
-          )}
-        </Section>
-
-        {!isGlobalSearch && (
-          <Section
-            title="Linked PR"
-            icon={
-              <GitPullRequest
-                size={13}
-              />
-            }
-          >
+          ].map(([value, label]) => (
             <Radio
-              label="Any"
+              key={value}
+              label={label}
               checked={
-                filters.linkedPr ===
-                "any"
+                filters.comments ===
+                value
               }
               onChange={() =>
                 set(
-                  "linkedPr",
-                  "any"
+                  "comments",
+                  value as Filters["comments"]
                 )
               }
             />
+          ))}
+        </Section>
 
+        {/* LINKED PR */}
+
+        {!isGlobalSearch && (
+          <Section
+            title="Linked pull request"
+            icon={
+              <GitPullRequest size={12} />
+            }
+          >
             <Radio
               label="Has linked PR"
               checked={
@@ -1135,12 +1054,12 @@ export default function FilterSidebar({
           </Section>
         )}
 
+        {/* AUTHOR */}
+
         <Section
-          title="Author type"
+          title="Author relationship"
           icon={
-            <UserRound
-              size={13}
-            />
+            <UserRound size={12} />
           }
         >
           {[
@@ -1153,38 +1072,34 @@ export default function FilterSidebar({
               "CONTRIBUTOR",
               "Contributor",
             ],
-            ["NONE", "Random"],
-          ].map(
-            ([value, label]) => (
-              <Check
-                key={value}
-                label={label}
-                checked={filters.authorType.includes(
-                  value
-                )}
-                onChange={() => {
-                  const current =
-                    filters.authorType;
+            ["NONE", "Other"],
+          ].map(([value, label]) => (
+            <CheckFilter
+              key={value}
+              label={label}
+              checked={filters.authorType.includes(
+                value
+              )}
+              onChange={() => {
+                const current =
+                  filters.authorType;
 
-                  set(
-                    "authorType",
-                    current.includes(
-                      value
-                    )
-                      ? current.filter(
-                          (item) =>
-                            item !==
-                            value
-                        )
-                      : [
-                          ...current,
-                          value,
-                        ]
-                  );
-                }}
-              />
-            )
-          )}
+                set(
+                  "authorType",
+                  current.includes(value)
+                    ? current.filter(
+                        (item) =>
+                          item !==
+                          value
+                      )
+                    : [
+                        ...current,
+                        value,
+                      ]
+                );
+              }}
+            />
+          ))}
         </Section>
       </div>
     </aside>
