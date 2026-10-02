@@ -1,30 +1,51 @@
-const BAI_API_URL =
-  "https://api.b.ai/v1/chat/completions";
+import OpenAI from "openai";
 
-const MODEL = "qwen3.8-flash";
+const MODEL = "deepseek/deepseek-v4-flash-free";
 
-export type Difficulty =
-  | "easy"
-  | "medium"
-  | "hard";
+export type Difficulty = "easy" | "medium" | "hard";
 
 export interface ScoreResult {
   difficulty: Difficulty;
   explanation: string;
 }
 
+function getClient(): OpenAI {
+  const apiKey = process.env.ORCAROUTER_API_KEY;
+
+  if (!apiKey) {
+    throw new Error(
+      "ORCAROUTER_API_KEY is not set in environment variables"
+    );
+  }
+
+  return new OpenAI({
+    baseURL: "https://api.orcarouter.ai/v1",
+    apiKey,
+  });
+}
+
+// Pulls the first {...} JSON object out of a string, even if it's
+// surrounded by reasoning text, markdown fences, or trailing commentary.
+function extractJsonObject(text: string): string | null {
+  const start = text.indexOf("{");
+  if (start === -1) return null;
+
+  let depth = 0;
+  for (let i = start; i < text.length; i++) {
+    if (text[i] === "{") depth++;
+    if (text[i] === "}") depth--;
+    if (depth === 0) {
+      return text.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
 export async function scoreIssue(
   title: string,
   bodyPreview: string | null
 ): Promise<ScoreResult> {
-  const apiKey =
-    process.env.BAI_API_KEY;
-
-  if (!apiKey) {
-    throw new Error(
-      "BAI_API_KEY is not set in environment variables"
-    );
-  }
+  const client = getClient();
 
   const prompt = `
 You are a senior open-source maintainer evaluating a GitHub issue for a developer who wants to contribute to the project.
@@ -52,7 +73,7 @@ The explanation MUST:
 4. Explain what a contributor should understand before starting.
 5. Never invent implementation details that are not supported by the issue.
 
-Return ONLY valid JSON:
+Do not show your reasoning. Do not think out loud. Respond with ONLY the JSON object below and nothing else — no preamble, no explanation of your reasoning process, no markdown fences:
 
 {
   "difficulty": "easy" | "medium" | "hard",
@@ -60,110 +81,55 @@ Return ONLY valid JSON:
 }
 `;
 
-  let response: Response;
+  let completion: OpenAI.Chat.Completions.ChatCompletion;
 
   try {
-    response = await fetch(
-      BAI_API_URL,
-      {
-        method: "POST",
-
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type":
-            "application/json",
-        },
-
-        body: JSON.stringify({
-          model: MODEL,
-
-          messages: [
-            {
-              role: "user",
-              content: prompt,
-            },
-          ],
-
-          temperature: 0.25,
-          max_tokens: 500,
-        }),
-      }
-    );
+    completion = await client.chat.completions.create({
+      model: MODEL,
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.25,
+      max_tokens: 1200, // reasoning models need headroom beyond the final JSON
+      response_format: { type: "json_object" }, // constrains output where supported
+    });
   } catch (error) {
-    throw new Error(
-      `Network error calling model API: ${error}`
-    );
+    throw new Error(`Error calling model API: ${error}`);
   }
 
-  if (!response.ok) {
-    const errorBody =
-      await response.text();
-
-    throw new Error(
-      `model API error ${response.status}: ${errorBody}`
-    );
-  }
-
-  const data =
-    await response.json();
-
-  const message =
-    data.choices?.[0]?.message;
+  const message = completion.choices?.[0]?.message;
 
   const text =
     message?.content?.trim() ||
-    message?.reasoning_content?.trim();
+    (message as any)?.reasoning_content?.trim();
 
   if (!text) {
     throw new Error(
-      `Empty response from model: ${JSON.stringify(
-        data
-      )}`
+      `Empty response from model: ${JSON.stringify(completion)}`
     );
   }
 
   let parsed: ScoreResult;
 
   try {
-    const clean = text
-      .replace(/```json|```/g, "")
-      .trim();
-
-    parsed = JSON.parse(clean);
+    const clean = text.replace(/```json|```/g, "").trim();
+    const jsonStr = extractJsonObject(clean) ?? clean;
+    parsed = JSON.parse(jsonStr);
   } catch {
-    throw new Error(
-      `Failed to parse model response: ${text}`
-    );
+    throw new Error(`Failed to parse model response: ${text}`);
+  }
+
+  if (!["easy", "medium", "hard"].includes(parsed.difficulty)) {
+    throw new Error(`Invalid difficulty value: ${parsed.difficulty}`);
   }
 
   if (
-    ![
-      "easy",
-      "medium",
-      "hard",
-    ].includes(parsed.difficulty)
+    typeof parsed.explanation !== "string" ||
+    parsed.explanation.trim().length < 20
   ) {
-    throw new Error(
-      `Invalid difficulty value: ${parsed.difficulty}`
-    );
-  }
-
-  if (
-    typeof parsed.explanation !==
-      "string" ||
-    parsed.explanation
-      .trim()
-      .length < 20
-  ) {
-    throw new Error(
-      "Model returned an unusable explanation"
-    );
+    throw new Error("Model returned an unusable explanation");
   }
 
   return {
-    difficulty:
-      parsed.difficulty,
-    explanation:
-      parsed.explanation.trim(),
+    difficulty: parsed.difficulty,
+    explanation: parsed.explanation.trim(),
   };
 }

@@ -3,7 +3,8 @@ import { prisma } from "@/app/lib/prisma"
 import { scoreIssue } from "@/app/lib/scorer"
 
 export async function POST(req: NextRequest) {
-  // 1. Parse issue IDs
+  // 1. Parse issue IDs (these are GitHub node IDs, e.g. "I_kwDO...",
+  // matching Issue.githubIssueId — NOT Issue.id, which is our internal uuid)
   let body: any
   try {
     body = await req.json()
@@ -14,48 +15,61 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const issueIds: string[] = body.issueIds ?? []
+  const githubIssueIds: string[] = body.issueIds ?? []
 
-  if (!Array.isArray(issueIds) || issueIds.length === 0) {
+  if (!Array.isArray(githubIssueIds) || githubIssueIds.length === 0) {
     return NextResponse.json(
       { error: "issueIds must be a non-empty array" },
       { status: 400 }
     )
   }
 
-  if (issueIds.length > 20) {
+  if (githubIssueIds.length > 20) {
     return NextResponse.json(
       { error: "Maximum 20 issues per request" },
       { status: 400 }
     )
   }
 
-  // 2. Fetch issues from DB (only those without a score yet)
+  // 2. Fetch issues from DB by githubIssueId (only those without a score yet)
   const issues = await prisma.issue.findMany({
     where: {
-      id: { in: issueIds },
+      githubIssueId: { in: githubIssueIds },
       aiScore: null,
     },
     select: {
-      id: true,
+      id: true,            // internal uuid — needed for the AiScore relation
+      githubIssueId: true, // what the frontend actually sent/expects back
       title: true,
       bodyPreview: true,
     },
   })
 
   if (issues.length === 0) {
-    // All issues already scored — fetch and return existing scores
+    // All matched issues already scored — fetch and return existing scores,
+    // joined through Issue to translate back to githubIssueId
     const existing = await prisma.aiScore.findMany({
-      where: { issueId: { in: issueIds } },
+      where: {
+        issue: { githubIssueId: { in: githubIssueIds } },
+      },
       select: {
-        issueId: true,
         difficulty: true,
         explanation: true,
+        issue: {
+          select: { githubIssueId: true },
+        },
       },
     })
+
+    const scores = existing.map((s) => ({
+      issueId: s.issue.githubIssueId,
+      difficulty: s.difficulty,
+      explanation: s.explanation,
+    }))
+
     return NextResponse.json({
-      scores: existing,
-      meta: { total: issueIds.length, scored: existing.length, failed: 0 },
+      scores,
+      meta: { total: githubIssueIds.length, scored: scores.length, failed: 0 },
     })
   }
 
@@ -66,17 +80,17 @@ export async function POST(req: NextRequest) {
 
       await prisma.aiScore.create({
         data: {
-          issueId: issue.id,
+          issueId: issue.id, // internal uuid, for the relation
           difficulty: score.difficulty,
           explanation: score.explanation,
-          provider: "b.ai",
-          model: "qwen3.8-flash",
+          provider: "orcarouter",
+          model: "deepseek/deepseek-v4-flash-free",
           scoredAt: new Date(),
         },
       })
 
       return {
-        issueId: issue.id,
+        issueId: issue.githubIssueId, // what the frontend matches on
         difficulty: score.difficulty,
         explanation: score.explanation,
       }
