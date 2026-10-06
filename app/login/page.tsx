@@ -928,7 +928,7 @@ function LoginPanel() {
                 textTransform: "uppercase",
               }}
             >
-              // authentication
+              {"// authentication"}
             </p>
 
             <h1
@@ -1363,7 +1363,7 @@ export default function LoginPage() {
                   textTransform: "uppercase",
                 }}
               >
-                // your open-source workspace
+                {"// your open-source workspace"}
               </p>
 
               <h2

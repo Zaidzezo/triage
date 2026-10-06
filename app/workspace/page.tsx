@@ -199,7 +199,7 @@ export default function WorkspacePage() {
         {/* States */}
         {!loaded ? (
           <div style={{ color: T.faint, fontFamily: "var(--font-mono)", fontSize: 10 }}>
-            // loading workspace...
+            {"// loading workspace..."}
           </div>
         ) : items.length === 0 && !q ? (
           <div
@@ -248,10 +248,10 @@ export default function WorkspacePage() {
             }}
           >
             <p style={{ margin: "0 0 6px", fontFamily: "var(--font-mono)", color: T.violet, fontSize: 10 }}>
-              // NO MATCHES
+              {"// NO MATCHES"}
             </p>
             <h2 style={{ margin: "0 0 7px", fontFamily: "var(--font-grotesk)", fontSize: 22 }}>
-              No tracked issues match "{query}".
+              No tracked issues match &quot;{query}&quot;.
             </h2>
             <p style={{ margin: 0, color: T.muted, fontSize: 12.5 }}>Try a different search term.</p>
           </div>
@@ -322,7 +322,7 @@ export default function WorkspacePage() {
                           padding: "28px 6px",
                         }}
                       >
-                        // drop issues here
+                        {"// drop issues here"}
                       </div>
                     ) : (
                       colItems.map((it) => (

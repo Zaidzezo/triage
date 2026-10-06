@@ -521,17 +521,22 @@ export default function HomeContent() {
     return () => document.removeEventListener("keydown", handler);
   }, []);
 
-  // CHANGED (Edit B): ── Load saved issue IDs ─────────────────────────
-  // The old version crashed silently on the 405 (route had no GET handler)
-  // and only stored one id form. Now it tolerates failures and stores BOTH
-  // id forms so pre-highlighting matches however /api/issues ids issues.
   useEffect(() => {
     fetch("/api/saved")
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (!data || !Array.isArray(data.saved)) return;
-        const ids: string[] = data.saved.flatMap((s: any) =>
-          [s.issue.id, s.issue.githubIssueId].filter(Boolean)
+        type SavedIssueResponse = {
+          issue: {
+            id?: string;
+            githubIssueId?: string;
+          };
+        };
+
+        const ids: string[] = data.saved.flatMap((s: SavedIssueResponse) =>
+          [s.issue.id, s.issue.githubIssueId].filter(
+            (id): id is string => Boolean(id)
+          )
         );
         setSavedIds(new Set(ids));
       })
@@ -1099,7 +1104,7 @@ export default function HomeContent() {
                         marginBottom: 10,
                       }}
                     >
-                      // NO RESULTS
+                    {"// NO RESULTS"}
                     </div>
                     <h3
                       style={{
@@ -1417,7 +1422,7 @@ export default function HomeContent() {
                             marginBottom: 10,
                           }}
                         >
-                          // NO MATCHES
+                          {"// NO MATCHES"}
                         </div>
                         <h3
                           style={{

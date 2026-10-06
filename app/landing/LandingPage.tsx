@@ -1,4 +1,3 @@
-/* eslint-disable react/no-unescaped-entities */
 "use client";
 
 import { useEffect, useRef, useState } from "react";
@@ -349,7 +348,7 @@ function TypingDemo() {
   });
 
   useEffect(() => {
-    if (reduce) { setDisplay(PHRASES[0]); return; }
+    if (reduce) return;
 
     const tick = () => {
       const s       = loop.current;
@@ -409,7 +408,7 @@ function TypingDemo() {
           whiteSpace: "nowrap", overflow: "hidden",
         }}
       >
-        {display}
+        {reduce ? PHRASES[0] : display}
         <motion.span
           aria-hidden
           animate={reduce ? undefined : { opacity: [1, 0, 1] }}
@@ -722,7 +721,7 @@ function Features() {
             fontFamily: "var(--font-mono)", fontSize: 11,
             letterSpacing: "0.14em", textTransform: "uppercase",
           }}>
-            // core workflow
+            {"// core workflow"}
           </p>
           <h2 style={{
             margin: 0,
@@ -823,7 +822,7 @@ function HowItWorks() {
             fontFamily: "var(--font-mono)", fontSize: 11,
             letterSpacing: "0.14em", textTransform: "uppercase",
           }}>
-            // how it works
+            {"// how it works"}
           </p>
           <h2 style={{
             margin: "0 0 18px",
