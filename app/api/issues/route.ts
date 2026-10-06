@@ -12,6 +12,12 @@ import {
 } from "@/app/lib/github"
 import { prisma } from "@/app/lib/prisma"
 
+import { auth } from "@/auth"
+import {
+  checkRateLimit,
+  getRateLimitHeaders,
+} from "@/app/lib/rateLimit"
+
 const MAX_RESULTS = 150
 const MAX_PER_REPO = 2
 const MAX_REPO_ISSUES = 100
@@ -20,6 +26,17 @@ const MAX_ISSUE_QUERIES = 20
 const ISSUES_PER_QUERY = 50
 const MIN_STARS = 1000
 const MAX_STARS = 50000
+
+const ISSUES_RATE_LIMIT = {
+  limit: 30,
+  windowMs: 10 * 60 * 1000,
+} as const
+
+const MAX_SEARCH_LENGTH = 100
+const MAX_REPOSITORY_PART_LENGTH = 100
+
+const GITHUB_NAME_PATTERN =
+  /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 const STAR_EDGES = [
   MIN_STARS,
@@ -36,6 +53,53 @@ const STAR_BANDS = STAR_EDGES
     min,
     max: STAR_EDGES[index + 1],
   }))
+
+async function allSettledWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<R>
+): Promise<PromiseSettledResult<R>[]> {
+  const results: PromiseSettledResult<R>[] =
+    new Array(items.length)
+
+  let nextIndex = 0
+
+  async function runWorker() {
+    while (true) {
+      const index = nextIndex++
+
+      if (index >= items.length) {
+        return
+      }
+
+      try {
+        results[index] = {
+          status: "fulfilled",
+          value: await worker(items[index]),
+        }
+      } catch (reason) {
+        results[index] = {
+          status: "rejected",
+          reason,
+        }
+      }
+    }
+  }
+
+  const workerCount = Math.min(
+    Math.max(concurrency, 1),
+    items.length
+  )
+
+  await Promise.all(
+    Array.from(
+      { length: workerCount },
+      () => runWorker()
+    )
+  )
+
+  return results
+}
 
 function bandIndex(stars: number) {
   return STAR_BANDS.findIndex(
@@ -62,10 +126,24 @@ function cleanInput(input: string) {
 function isExactRepository(input: string) {
   const parts = input.split("/")
 
+  if (parts.length !== 2) {
+    return false
+  }
+
+  const [owner, repo] = parts
+
+  if (
+    owner.length === 0 ||
+    owner.length > MAX_REPOSITORY_PART_LENGTH ||
+    repo.length === 0 ||
+    repo.length > MAX_REPOSITORY_PART_LENGTH
+  ) {
+    return false
+  }
+
   return (
-    input.includes("/") &&
-    parts.length === 2 &&
-    parts.every(Boolean)
+    GITHUB_NAME_PATTERN.test(owner) &&
+    GITHUB_NAME_PATTERN.test(repo)
   )
 }
 
@@ -258,6 +336,35 @@ async function cacheIssues(
 export async function POST(
   req: NextRequest
 ) {
+  const session = await auth()
+  const githubId = session?.user?.githubId
+
+  if (!githubId) {
+    return NextResponse.json(
+      { error: "NOT_AUTHENTICATED" },
+      { status: 401 }
+    )
+  }
+
+  const rateLimit = checkRateLimit(
+    `issues:${githubId}`,
+    ISSUES_RATE_LIMIT
+  )
+
+  if (!rateLimit.allowed) {
+    return NextResponse.json(
+      {
+        error: "RATE_LIMIT_EXCEEDED",
+        retryAfterSeconds:
+          rateLimit.retryAfterSeconds,
+      },
+      {
+        status: 429,
+        headers: getRateLimitHeaders(rateLimit),
+      }
+    )
+  }
+
   let accessToken: string
 
   try {
@@ -312,6 +419,15 @@ export async function POST(
     )
   }
 
+  if (input.length > MAX_SEARCH_LENGTH) {
+  return NextResponse.json(
+    {
+      error: `Search query must be ${MAX_SEARCH_LENGTH} characters or fewer`,
+    },
+    { status: 400 }
+  )
+}
+
   if (isExactRepository(input)) {
     const [owner, repoName] =
       input.split("/")
@@ -325,39 +441,40 @@ export async function POST(
         accessToken
       )
     } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : ""
+  const message =
+    error instanceof Error
+      ? error.message
+      : ""
 
-      if (isAuthError(message)) {
-        return NextResponse.json(
-          { error: "TOKEN_REVOKED" },
-          { status: 401 }
-        )
-      }
+  if (isAuthError(message)) {
+    return NextResponse.json(
+      { error: "TOKEN_REVOKED" },
+      { status: 401 }
+    )
+  }
 
-      if (
-        message.toLowerCase().includes(
-          "not found"
-        ) ||
-        message.includes("404")
-      ) {
-        return NextResponse.json(
-          { error: "Repository not found" },
-          { status: 404 }
-        )
-      }
+  if (
+    message.toLowerCase().includes(
+      "not found"
+    ) ||
+    message.includes("404")
+  ) {
+    return NextResponse.json(
+      { error: "Repository not found" },
+      { status: 404 }
+    )
+  }
 
-      return NextResponse.json(
-        {
-          error:
-            message ||
-            "Failed to fetch repository",
-        },
-        { status: 500 }
-      )
-    }
+  console.error(
+    "GitHub repository metadata error:",
+    error
+  )
+
+  return NextResponse.json(
+    { error: "Failed to fetch repository" },
+    { status: 500 }
+  )
+}
 
     if (
       repo.stars < MIN_STARS ||
@@ -439,27 +556,28 @@ export async function POST(
           undefined
       }
     } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : ""
+  const message =
+    error instanceof Error
+      ? error.message
+      : ""
 
-      if (isAuthError(message)) {
-        return NextResponse.json(
-          { error: "TOKEN_REVOKED" },
-          { status: 401 }
-        )
-      }
+  if (isAuthError(message)) {
+    return NextResponse.json(
+      { error: "TOKEN_REVOKED" },
+      { status: 401 }
+    )
+  }
 
-      return NextResponse.json(
-        {
-          error:
-            message ||
-            "GitHub issue search failed",
-        },
-        { status: 500 }
-      )
-    }
+  console.error(
+    "GitHub repository issue search error:",
+    error
+  )
+
+  return NextResponse.json(
+    { error: "GitHub issue search failed" },
+    { status: 500 }
+  )
+}
 
     const repoMeta = {
       fullName: repo.nameWithOwner,
@@ -512,20 +630,21 @@ export async function POST(
   }
 
   const bandSearches =
-    await Promise.allSettled(
-      STAR_BANDS.map((band) =>
-        searchRepositories(
-          input,
-          accessToken,
-          {
-            minStars: band.min,
-            maxStars: band.max,
-            perPage:
-              REPOS_PER_BAND,
-          }
-        )
+  await allSettledWithConcurrency(
+    STAR_BANDS,
+    2,
+    (band) =>
+      searchRepositories(
+        input,
+        accessToken,
+        {
+          minStars: band.min,
+          maxStars: band.max,
+          perPage:
+            REPOS_PER_BAND,
+        }
       )
-    )
+  )
 
   const reposByBand: string[][] = []
   let repoSearchError: unknown =
@@ -561,29 +680,30 @@ export async function POST(
     )
 
   if (!totalRepos) {
-    if (repoSearchError) {
-      const message =
-        repoSearchError instanceof
-          Error
-          ? repoSearchError.message
-          : ""
+  if (repoSearchError) {
+    const message =
+      repoSearchError instanceof
+        Error
+        ? repoSearchError.message
+        : ""
 
-      if (isAuthError(message)) {
-        return NextResponse.json(
-          { error: "TOKEN_REVOKED" },
-          { status: 401 }
-        )
-      }
-
+    if (isAuthError(message)) {
       return NextResponse.json(
-        {
-          error:
-            message ||
-            "GitHub repository search failed",
-        },
-        { status: 500 }
+        { error: "TOKEN_REVOKED" },
+        { status: 401 }
       )
     }
+
+    console.error(
+      "GitHub repository search error:",
+      repoSearchError
+    )
+
+    return NextResponse.json(
+      { error: "GitHub repository search failed" },
+      { status: 500 }
+    )
+  }
 
     return NextResponse.json({
       mode: "global",
@@ -634,21 +754,21 @@ export async function POST(
     )
 
   const settled =
-    await Promise.allSettled(
-      scopeChunks.map(
-        (repoScope) =>
-          searchIssues(
-            input,
-            accessToken,
-            undefined,
-            {
-              repoScope,
-              pageSize:
-                ISSUES_PER_QUERY,
-            }
-          )
+  await allSettledWithConcurrency(
+    scopeChunks,
+    3,
+    (repoScope) =>
+      searchIssues(
+        input,
+        accessToken,
+        undefined,
+        {
+          repoScope,
+          pageSize:
+            ISSUES_PER_QUERY,
+        }
       )
-    )
+  )
 
   const fetchedPages: SearchIssuesPage[] =
     []
@@ -686,14 +806,15 @@ export async function POST(
       )
     }
 
-    return NextResponse.json(
-      {
-        error:
-          message ||
-          "GitHub issue search failed",
-      },
-      { status: 500 }
-    )
+    console.error(
+  "GitHub global issue search error:",
+  firstError
+)
+
+return NextResponse.json(
+  { error: "GitHub issue search failed" },
+  { status: 500 }
+)
   }
 
   const allIssues =

@@ -29,6 +29,18 @@ interface SaveRequest {
   repo?: IncomingRepo
 }
 
+const MAX_ID_LENGTH = 100
+const MAX_TITLE_LENGTH = 500
+const MAX_REPOSITORY_LENGTH = 201
+const MAX_URL_LENGTH = 2048
+const MAX_BODY_PREVIEW_LENGTH = 700
+const MAX_DESCRIPTION_LENGTH = 2000
+const MAX_LANGUAGE_LENGTH = 100
+const MAX_USERNAME_LENGTH = 100
+
+const GITHUB_REPOSITORY_PATTERN =
+  /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/
+
 async function getAuthenticatedUserId(): Promise<string> {
   const session = await auth()
 
@@ -85,7 +97,8 @@ function isSaveRequest(body: unknown): body is SaveRequest {
 
   return (
     typeof value.issueId === "string" &&
-    value.issueId.trim().length > 0
+    value.issueId.trim().length > 0 &&
+    value.issueId.length <= MAX_ID_LENGTH
   )
 }
 
@@ -95,6 +108,60 @@ async function upsertIssueFromPayload(
   repo: IncomingRepo | undefined
 ): Promise<{ id: string } | null> {
   if (!repo?.fullName || !issue.url || !issue.title) {
+    return null
+  }
+
+  if (
+    !GITHUB_REPOSITORY_PATTERN.test(repo.fullName) ||
+    repo.fullName.length > MAX_REPOSITORY_LENGTH
+  ) {
+    return null
+  }
+
+  if (
+    issue.githubIssueId != null &&
+    (issue.githubIssueId.trim().length === 0 ||
+      issue.githubIssueId.length > MAX_ID_LENGTH)
+  ) {
+    return null
+  }
+
+  if (
+    issue.title.length === 0 ||
+    issue.title.length > MAX_TITLE_LENGTH
+  ) {
+    return null
+  }
+
+  if (issue.url.length > MAX_URL_LENGTH) {
+    return null
+  }
+
+  if (
+    issue.bodyPreview != null &&
+    issue.bodyPreview.length > MAX_BODY_PREVIEW_LENGTH
+  ) {
+    return null
+  }
+
+  if (
+    repo.description != null &&
+    repo.description.length > MAX_DESCRIPTION_LENGTH
+  ) {
+    return null
+  }
+
+  if (
+    repo.language != null &&
+    repo.language.length > MAX_LANGUAGE_LENGTH
+  ) {
+    return null
+  }
+
+  if (
+    repo.fullName.split("/")[0].length >
+    MAX_USERNAME_LENGTH
+  ) {
     return null
   }
 
@@ -148,7 +215,15 @@ async function upsertIssueFromPayload(
       isAssigned: issue.isAssigned ?? false,
       hasLinkedPr: issue.hasLinkedPr ?? false,
       ...(issue.createdAt
-        ? { createdAt: new Date(issue.createdAt) }
+        ? (() => {
+            const parsedDate = new Date(
+              issue.createdAt
+            )
+
+            return Number.isNaN(parsedDate.getTime())
+              ? {}
+              : { createdAt: parsedDate }
+          })()
         : {}),
       lastSyncedAt: new Date(),
     },
@@ -166,9 +241,19 @@ async function upsertIssueFromPayload(
       commentsCount: issue.commentsCount ?? 0,
       isAssigned: issue.isAssigned ?? false,
       hasLinkedPr: issue.hasLinkedPr ?? false,
-      createdAt: issue.createdAt
-        ? new Date(issue.createdAt)
-        : new Date(),
+      createdAt: (() => {
+        if (!issue.createdAt) {
+          return new Date()
+        }
+
+        const parsedDate = new Date(
+          issue.createdAt
+        )
+
+        return Number.isNaN(parsedDate.getTime())
+          ? new Date()
+          : parsedDate
+      })(),
       lastSyncedAt: new Date(),
     },
 

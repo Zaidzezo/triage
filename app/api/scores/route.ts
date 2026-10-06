@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/app/lib/prisma"
 import { scoreIssue } from "@/app/lib/scorer"
 
+import { auth } from "@/auth"
+import {
+  checkRateLimit,
+  getRateLimitHeaders,
+} from "@/app/lib/rateLimit"
+
 interface ScoresRequest {
   issueIds: string[]
 }
@@ -12,6 +18,13 @@ interface ScoreResponse {
   explanation: string
 }
 
+const SCORES_RATE_LIMIT = {
+  limit: 10,
+  windowMs: 10 * 60 * 1000,
+} as const
+
+const MAX_ISSUE_ID_LENGTH = 100
+
 function isScoresRequest(body: unknown): body is ScoresRequest {
   if (!body || typeof body !== "object") {
     return false
@@ -19,15 +32,48 @@ function isScoresRequest(body: unknown): body is ScoresRequest {
 
   const value = body as Record<string, unknown>
 
-  return (
-    Array.isArray(value.issueIds) &&
-    value.issueIds.every(
-      (id): id is string => typeof id === "string"
-    )
+  if (!Array.isArray(value.issueIds)) {
+    return false
+  }
+
+  return value.issueIds.every(
+    (id): id is string =>
+      typeof id === "string" &&
+      id.trim().length > 0 &&
+      id.length <= MAX_ISSUE_ID_LENGTH
   )
 }
 
 export async function POST(req: NextRequest) {
+  const session = await auth()
+  const githubId = session?.user?.githubId
+
+  if (!githubId) {
+    return NextResponse.json(
+      { error: "NOT_AUTHENTICATED" },
+      { status: 401 }
+    )
+  }
+
+  const rateLimit = checkRateLimit(
+    `scores:${githubId}`,
+    SCORES_RATE_LIMIT
+  )
+
+  if (!rateLimit.allowed) {
+    return NextResponse.json(
+      {
+        error: "RATE_LIMIT_EXCEEDED",
+        retryAfterSeconds:
+          rateLimit.retryAfterSeconds,
+      },
+      {
+        status: 429,
+        headers: getRateLimitHeaders(rateLimit),
+      }
+    )
+  }
+
   let body: unknown
 
   try {
@@ -46,8 +92,11 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const githubIssueIds = body.issueIds
-
+  const githubIssueIds = [
+  ...new Set(
+    body.issueIds.map((id) => id.trim())
+  ),
+]
   if (githubIssueIds.length > 20) {
     return NextResponse.json(
       { error: "Maximum 20 issues per request" },
